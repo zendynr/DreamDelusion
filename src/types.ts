@@ -30,4 +30,11 @@ export type Session = {
   currentThreadId?: string; // Currently active thread
 };
 
+export type User = {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: string;
+};
+
 

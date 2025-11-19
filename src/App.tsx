@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { Thought, Session, ChatMessage, ChatThread } from './types';
 import { useSpeechRecognition } from './useSpeechRecognition';
+import { getCurrentUser, deleteUser, signOut } from './auth';
+import LandingPage from './LandingPage';
+import AccountManagement from './AccountManagement';
 
 const SESSIONS_KEY = 'thoughtTimer:sessions';
 const CURRENT_SESSION_KEY = 'thoughtTimer:currentSessionId';
@@ -95,6 +98,7 @@ function saveSession(session: Session | null) {
 }
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [isListening, setIsListening] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -103,14 +107,21 @@ function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [livePreview, setLivePreview] = useState('');
   const [interimText, setInterimText] = useState('');
-  const [viewMode, setViewMode] = useState<'thoughts' | 'chat' | 'history'>('chat');
+  const [viewMode, setViewMode] = useState<'thoughts' | 'chat' | 'history' | 'account'>('chat');
   const [sessionsHistory, setSessionsHistory] = useState<Session[]>([]);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('dreamdelusion:theme');
+    return (saved === 'light' || saved === 'dark') ? saved : 'dark';
+  });
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const sessionRef = useRef<Session | null>(null);
   const isListeningRef = useRef(false);
   const errorRef = useRef<string | null>(null);
   const transcriptionAreaRef = useRef<HTMLDivElement | null>(null);
   const chatAreaRef = useRef<HTMLDivElement | null>(null);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
   
   // Keep refs in sync with state
   useEffect(() => {
@@ -401,8 +412,26 @@ function App() {
     },
   });
 
-  // Load session and history on mount
+  // Check authentication on mount
   useEffect(() => {
+    const user = getCurrentUser();
+    setIsAuthenticated(!!user);
+  }, []);
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('dreamdelusion:theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
+  // Load session and history on mount (only if authenticated)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    
     const allSessions = loadAllSessions();
     setSessionsHistory(allSessions);
     
@@ -436,7 +465,55 @@ function App() {
       const elapsed = Math.floor((now - startTime) / 1000);
       setElapsedSeconds(elapsed);
     }
-  }, []);
+  }, [isAuthenticated]);
+
+  const handleAuthSuccess = () => {
+    setIsAuthenticated(true);
+  };
+
+  const handleSkip = () => {
+    // Allow guest access without authentication
+    setIsAuthenticated(true);
+  };
+
+  const handleSignOut = () => {
+    signOut();
+    setIsAuthenticated(false);
+    setSession(null);
+    setDrawerOpen(false);
+    setAccountMenuOpen(false);
+  };
+
+  const handleDeleteAccount = async () => {
+    const user = getCurrentUser();
+    if (!user) return;
+
+    const result = deleteUser(user.id);
+    if (result.success) {
+      setIsAuthenticated(false);
+      setSession(null);
+      setDrawerOpen(false);
+      setAccountMenuOpen(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
+  // Close account menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(event.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    if (accountMenuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [accountMenuOpen]);
 
   // Sync sessions history when session changes
   useEffect(() => {
@@ -758,6 +835,15 @@ function App() {
     return session.thoughts.map(t => t.text).join(' ') + (interimText ? ' ' + interimText : '');
   };
 
+  // Show landing page if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <>
+        <LandingPage onAuthSuccess={handleAuthSuccess} onSkip={handleSkip} theme={theme} />
+      </>
+    );
+  }
+
   return (
     <div className="app">
       {/* Main Interface */}
@@ -784,6 +870,86 @@ function App() {
         <div className={`live-preview ${livePreview ? 'visible' : ''}`}>
           {livePreview}
         </div>
+      </div>
+
+      {/* Top Left: Account Icon with Dropdown */}
+      <div ref={accountMenuRef} style={{ position: 'absolute', top: '32px', left: '32px', zIndex: 30 }}>
+        <button
+          className="nav-btn nav-btn-left"
+          onClick={() => setAccountMenuOpen(!accountMenuOpen)}
+          aria-label="Account Menu"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" className="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        </button>
+
+        {accountMenuOpen && (
+          <div className="account-dropdown">
+            <div className="account-dropdown-header">
+              {getCurrentUser()?.name || 'Guest User'}
+            </div>
+            <div className="account-dropdown-divider"></div>
+            <button
+              className="account-dropdown-item"
+              onClick={() => {
+                toggleTheme();
+                setAccountMenuOpen(false);
+              }}
+            >
+              {theme === 'dark' ? (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="icon-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                  </svg>
+                  Light Mode
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="icon-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                  </svg>
+                  Dark Mode
+                </>
+              )}
+            </button>
+            {getCurrentUser() ? (
+              <>
+                <button
+                  className="account-dropdown-item"
+                  onClick={handleSignOut}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="icon-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                  </svg>
+                  Sign Out
+                </button>
+                <button
+                  className="account-dropdown-item account-dropdown-item-danger"
+                  onClick={() => {
+                    setShowDeleteConfirm(true);
+                    setAccountMenuOpen(false);
+                  }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="icon-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Delete Account
+                </button>
+              </>
+            ) : (
+              <button
+                className="account-dropdown-item"
+                onClick={handleSignOut}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="icon-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                Return to Login
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Top Right: Notes Toggle */}
@@ -1155,6 +1321,8 @@ function App() {
               )}
             </div>
           </div>
+        ) : viewMode === 'account' ? (
+          <AccountManagement onSignOut={handleSignOut} />
         ) : null}
 
         {/* Action Buttons */}
@@ -1245,6 +1413,30 @@ function App() {
 
       {/* Copy Message */}
       {copyMessage && <div className="copy-message">{copyMessage}</div>}
+
+      {/* Delete Account Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete Account</h3>
+            <p>Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data.</p>
+            <div className="modal-actions">
+              <button
+                className="account-button"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="account-button danger"
+                onClick={handleDeleteAccount}
+              >
+                Delete Account
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
