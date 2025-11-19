@@ -8,6 +8,8 @@ export {
   updateUserProfile as updateUser,
   deleteUserAccount as deleteUser,
   onAuthStateChange,
+  signInWithGoogle,
+  signInAnonymouslyUser as signInAnonymously,
 } from './firebase/auth';
 
 // Legacy function for backward compatibility (no longer needed but kept for migration)

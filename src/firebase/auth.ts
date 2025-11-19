@@ -9,6 +9,9 @@ import {
   updatePassword,
   reauthenticateWithCredential,
   EmailAuthProvider,
+  signInWithPopup,
+  GoogleAuthProvider,
+  signInAnonymously,
 } from 'firebase/auth';
 import { auth } from './config';
 import { saveUserProfile, getUserProfile } from './db';
@@ -247,6 +250,68 @@ export async function deleteUserAccount(
     }
     
     return { success: false, error: error.message || 'Failed to delete account' };
+  }
+}
+
+// Sign in with Google
+export async function signInWithGoogle(): Promise<{ success: boolean; error?: string; user?: User }> {
+  try {
+    const provider = new GoogleAuthProvider();
+    const userCredential = await signInWithPopup(auth, provider);
+    const firebaseUser = userCredential.user;
+
+    // Check if user profile exists in Firestore, if not create it
+    let profile = await getUserProfile(firebaseUser.uid);
+    if (!profile) {
+      // Save user profile to Firestore
+      await saveUserProfile(firebaseUser.uid, {
+        name: firebaseUser.displayName || '',
+        email: firebaseUser.email || '',
+      });
+      profile = await getUserProfile(firebaseUser.uid);
+    }
+
+    const appUser = firebaseUserToAppUser(
+      firebaseUser,
+      profile?.name || firebaseUser.displayName || undefined
+    );
+
+    return { success: true, user: appUser };
+  } catch (error: any) {
+    console.error('Google sign in error:', error);
+    
+    // Handle Firebase Auth errors
+    if (error.code === 'auth/popup-closed-by-user') {
+      return { success: false, error: 'Sign in cancelled' };
+    } else if (error.code === 'auth/popup-blocked') {
+      return { success: false, error: 'Popup blocked. Please allow popups for this site.' };
+    }
+    
+    return { success: false, error: error.message || 'Failed to sign in with Google' };
+  }
+}
+
+// Sign in anonymously
+export async function signInAnonymouslyUser(): Promise<{ success: boolean; error?: string; user?: User }> {
+  try {
+    const userCredential = await signInAnonymously(auth);
+    const firebaseUser = userCredential.user;
+
+    // Generate a display name for anonymous users
+    const anonymousName = `Guest ${firebaseUser.uid.substring(0, 6)}`;
+
+    // Save user profile to Firestore
+    await saveUserProfile(firebaseUser.uid, {
+      name: anonymousName,
+      email: '', // Anonymous users don't have email
+    });
+
+    const appUser = firebaseUserToAppUser(firebaseUser, anonymousName);
+    return { success: true, user: appUser };
+  } catch (error: any) {
+    console.error('Anonymous sign in error:', error);
+    
+    return { success: false, error: error.message || 'Failed to sign in anonymously' };
   }
 }
 
