@@ -11,7 +11,7 @@ export default function Logo({ variant = 'dark' }: { variant?: 'light' | 'dark' 
     >
       {/* Cloud outline - thicker, more stylized */}
       <path
-        d="M25 55 Q15 55 15 45 Q15 35 25 35 Q30 20 45 20 Q60 20 65 35 Q75 35 75 45 Q75 55 65 55 Z"
+        d="M50 55 Q40 55 40 45 Q40 35 50 35 Q55 20 70 20 Q85 20 90 35 Q100 35 100 45 Q100 55 90 55 Z"
         fill="none"
         stroke={color}
         strokeWidth="4"
@@ -21,21 +21,21 @@ export default function Logo({ variant = 'dark' }: { variant?: 'light' | 'dark' 
       
       {/* Spiral inside left portion of cloud - tighter spiral */}
       <path
-        d="M32 48 Q34 46 36 48 Q34 50 32 48"
+        d="M57 48 Q59 46 61 48 Q59 50 57 48"
         fill="none"
         stroke={color}
         strokeWidth="3"
         strokeLinecap="round"
       />
       <path
-        d="M32 48 Q30 50 28 48 Q30 46 32 48"
+        d="M57 48 Q55 50 53 48 Q55 46 57 48"
         fill="none"
         stroke={color}
         strokeWidth="3"
         strokeLinecap="round"
       />
       <path
-        d="M32 48 Q33 47 34 48 Q33 49 32 48"
+        d="M57 48 Q58 47 59 48 Q58 49 57 48"
         fill="none"
         stroke={color}
         strokeWidth="2.5"
@@ -44,7 +44,7 @@ export default function Logo({ variant = 'dark' }: { variant?: 'light' | 'dark' 
       
       {/* Two Z letters above right side of cloud - one larger, one smaller */}
       <text
-        x="58"
+        x="83"
         y="22"
         fontSize="18"
         fontWeight="bold"
@@ -55,7 +55,7 @@ export default function Logo({ variant = 'dark' }: { variant?: 'light' | 'dark' 
         Z
       </text>
       <text
-        x="62"
+        x="87"
         y="28"
         fontSize="14"
         fontWeight="bold"

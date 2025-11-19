@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Thought, ThoughtTag } from './types';
+import { Thought } from './types';
 import { useSpeechRecognition } from './useSpeechRecognition';
 import { getCurrentUser, deleteUser, signOut } from './auth';
 import LandingPage from './LandingPage';
@@ -13,11 +13,11 @@ function App() {
   const [mode, setMode] = useState<'capture' | 'library'>('capture');
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [selectedThoughtId, setSelectedThoughtId] = useState<string | null>(null);
-  const [selectedTag, setSelectedTag] = useState<ThoughtTag | 'All'>('All');
   const [isListening, setIsListening] = useState(false);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [livePreview, setLivePreview] = useState('');
+  const [finalTranscript, setFinalTranscript] = useState('');
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -26,7 +26,7 @@ function App() {
   });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   
-  const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const recordingStartTimeRef = useRef<number | null>(null);
   const isListeningRef = useRef(false);
   const errorRef = useRef<string | null>(null);
@@ -101,6 +101,8 @@ function App() {
   const { start: startRecognition, stop: stopRecognition, isSupported } = useSpeechRecognition({
     onStart: () => {
       setIsListening(true);
+      recordingStartTimeRef.current = Date.now();
+      setElapsedSeconds(0);
       if (errorRef.current && errorRef.current.includes('Network')) {
         setError(null);
       }
@@ -131,9 +133,8 @@ function App() {
     onResult: (transcript: string, isFinal: boolean) => {
       if (isFinal) {
         if (transcript.trim()) {
-          // Accumulate final transcripts
-          const current = finalTranscriptRef.current;
-          finalTranscriptRef.current = current ? current + ' ' + transcript.trim() : transcript.trim();
+          finalTranscriptRef.current = transcript.trim();
+          setFinalTranscript(transcript.trim());
         }
         setLivePreview('');
       } else {
@@ -194,9 +195,8 @@ function App() {
     const hasPermission = await requestMicrophonePermission();
     if (hasPermission) {
       finalTranscriptRef.current = '';
+      setFinalTranscript('');
       setLivePreview('');
-      recordingStartTimeRef.current = Date.now();
-      setElapsedSeconds(0);
       startRecognition();
     }
   };
@@ -206,18 +206,14 @@ function App() {
     setIsListening(false);
     
     // Save thought if we have final transcript
-    const textToSave = finalTranscriptRef.current.trim();
-    if (textToSave && recordingStartTimeRef.current) {
+    if (finalTranscriptRef.current.trim() && recordingStartTimeRef.current) {
       const duration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
-      // Apply selected tag if one was chosen (not "All")
-      const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
-      
       const newThought: Thought = {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         timestamp: new Date().toISOString(),
-        text: textToSave,
-        title: textToSave.substring(0, 50) + (textToSave.length > 50 ? '...' : ''),
-        tags: tags,
+        text: finalTranscriptRef.current.trim(),
+        title: finalTranscriptRef.current.trim().substring(0, 50) + (finalTranscriptRef.current.length > 50 ? '...' : ''),
+        tags: [],
         pinned: false,
         durationSeconds: duration,
       };
@@ -225,18 +221,24 @@ function App() {
       setThoughts(prev => [newThought, ...prev]);
       setSelectedThoughtId(newThought.id);
       setMode('library');
-      const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
-      setToastMessage(`Thought saved${tagMessage} · Tap to view in Library`);
+      setToastMessage('Thought saved · Tap to view in Library');
       setTimeout(() => setToastMessage(null), 3000);
+      
+      finalTranscriptRef.current = '';
+      setFinalTranscript('');
     }
     
-    // Reset everything
-    finalTranscriptRef.current = '';
-    setLivePreview('');
     recordingStartTimeRef.current = null;
     setElapsedSeconds(0);
   };
 
+  const handleThoughtSaved = (thought: Thought) => {
+    setThoughts(prev => [thought, ...prev]);
+    setSelectedThoughtId(thought.id);
+    setMode('library');
+    setToastMessage('Thought saved · Tap to view in Library');
+    setTimeout(() => setToastMessage(null), 3000);
+  };
 
   const handleUpdateThought = (thought: Thought) => {
     setThoughts(prev => prev.map(t => t.id === thought.id ? thought : t));
@@ -247,13 +249,6 @@ function App() {
     if (selectedThoughtId === id) {
       setSelectedThoughtId(null);
     }
-  };
-
-  const handleDeleteAllThoughts = () => {
-    setThoughts([]);
-    setSelectedThoughtId(null);
-    setToastMessage('All thoughts deleted');
-    setTimeout(() => setToastMessage(null), 3000);
   };
 
   const handlePinThought = (id: string) => {
@@ -410,22 +405,24 @@ function App() {
         {mode === 'capture' ? (
           <CaptureView
             isListening={isListening}
+            elapsedSeconds={elapsedSeconds}
+            livePreview={livePreview}
+            finalTranscript={finalTranscript}
             onStartCapture={handleStartCapture}
             onStopCapture={handleStopCapture}
+            onThoughtSaved={handleThoughtSaved}
             speechSupported={speechSupported}
+            error={error}
           />
         ) : (
           <LibraryView
             thoughts={thoughts}
             selectedThoughtId={selectedThoughtId}
-            selectedTag={selectedTag}
             onSelectThought={setSelectedThoughtId}
             onUpdateThought={handleUpdateThought}
             onDeleteThought={handleDeleteThought}
-            onDeleteAllThoughts={handleDeleteAllThoughts}
             onPinThought={handlePinThought}
             onStartCapture={() => setMode('capture')}
-            onTagChange={setSelectedTag}
           />
         )}
       </div>

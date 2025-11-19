@@ -1,8 +1,13 @@
+export type ThoughtTag = 'Idea' | 'Task' | 'Reflection' | 'Random';
+
 export type Thought = {
   id: string;
-  timeOffsetSeconds: number;
   timestamp: string; // ISO
   text: string;
+  title?: string; // Auto-generated or user-edited
+  tags: ThoughtTag[];
+  pinned: boolean;
+  durationSeconds: number; // Duration of the recording
 };
 
 export type ChatMessage = {
