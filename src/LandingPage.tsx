@@ -20,9 +20,9 @@ export default function LandingPage({ onAuthSuccess, onSkip, theme = 'dark' }: {
     try {
       let result;
       if (mode === 'signup') {
-        result = signUp(email, password, name);
+        result = await signUp(email, password, name);
       } else {
-        result = signIn(email, password);
+        result = await signIn(email, password);
       }
 
       if (result.success && result.user) {
@@ -30,8 +30,9 @@ export default function LandingPage({ onAuthSuccess, onSkip, theme = 'dark' }: {
       } else {
         setError(result.error || 'Authentication failed');
       }
-    } catch (err) {
-      setError('An unexpected error occurred');
+    } catch (err: any) {
+      console.error('Auth error:', err);
+      setError(err.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }

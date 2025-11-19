@@ -6,19 +6,21 @@ export default function AccountManagement({ onSignOut }: { onSignOut: () => void
   const [user, setUser] = useState<User | null>(null);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
-    const currentUser = getCurrentUser();
-    if (currentUser) {
-      setUser(currentUser);
-      setName(currentUser.name);
-      setEmail(currentUser.email);
-    }
+    const loadUser = async () => {
+      const currentUser = await getCurrentUser();
+      if (currentUser) {
+        setUser(currentUser);
+        setName(currentUser.name);
+        setEmail(currentUser.email);
+      }
+    };
+    loadUser();
   }, []);
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
@@ -30,7 +32,9 @@ export default function AccountManagement({ onSignOut }: { onSignOut: () => void
     setLoading(true);
 
     try {
-      const result = updateUser(user.id, { name, email });
+      // Note: Firebase Auth doesn't allow changing email directly
+      // Only updating name/displayName
+      const result = await updateUser(name);
       if (result.success && result.user) {
         setUser(result.user);
         setSuccess('Profile updated successfully');
@@ -38,8 +42,9 @@ export default function AccountManagement({ onSignOut }: { onSignOut: () => void
       } else {
         setError(result.error || 'Failed to update profile');
       }
-    } catch (err) {
-      setError('An unexpected error occurred');
+    } catch (err: any) {
+      console.error('Update profile error:', err);
+      setError(err.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }
@@ -52,24 +57,31 @@ export default function AccountManagement({ onSignOut }: { onSignOut: () => void
     setLoading(true);
 
     try {
-      const result = deleteUser(user.id);
+      // Note: deleteUserAccount may require password for re-authentication
+      const result = await deleteUser();
       if (result.success) {
         onSignOut();
       } else {
         setError(result.error || 'Failed to delete account');
         setShowDeleteConfirm(false);
       }
-    } catch (err) {
-      setError('An unexpected error occurred');
+    } catch (err: any) {
+      console.error('Delete account error:', err);
+      setError(err.message || 'An unexpected error occurred');
       setShowDeleteConfirm(false);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSignOut = () => {
-    signOut();
-    onSignOut();
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      onSignOut();
+    } catch (err: any) {
+      console.error('Sign out error:', err);
+      setError('Failed to sign out');
+    }
   };
 
   if (!user) {
@@ -103,9 +115,13 @@ export default function AccountManagement({ onSignOut }: { onSignOut: () => void
               id="account-email"
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
+              disabled
+              style={{ opacity: 0.6, cursor: 'not-allowed' }}
+              title="Email cannot be changed"
             />
+            <small style={{ color: 'var(--text-secondary)', fontSize: '0.85em', marginTop: '4px', display: 'block' }}>
+              Email cannot be changed for security reasons
+            </small>
           </div>
 
           {error && (
@@ -123,7 +139,7 @@ export default function AccountManagement({ onSignOut }: { onSignOut: () => void
           <button
             type="submit"
             className="account-button"
-            disabled={loading || (name === user.name && email === user.email)}
+            disabled={loading || name === user.name}
           >
             {loading ? 'Saving...' : 'Save Changes'}
           </button>

@@ -7,6 +7,7 @@ interface ThoughtDetailProps {
   onDelete: (id: string) => void;
   onPin: (id: string) => void;
   onStartCapture: () => void;
+  onClose?: () => void;
 }
 
 const allTags: ThoughtTag[] = ['Idea', 'Task', 'Reflection', 'Random'];
@@ -36,9 +37,11 @@ export default function ThoughtDetail({
   onDelete,
   onPin,
   onStartCapture,
+  onClose,
 }: ThoughtDetailProps) {
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   if (!thought) {
     return (
@@ -94,6 +97,29 @@ export default function ThoughtDetail({
 
   return (
     <div className="thought-detail">
+      {onClose && (
+        <div className="thought-detail-top-actions">
+          <button
+            className="thought-detail-back-btn"
+            onClick={onClose}
+            aria-label="Back"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <button
+            className="thought-detail-delete-top-btn"
+            onClick={() => setShowDeleteConfirm(true)}
+            aria-label="Delete"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+          </button>
+        </div>
+      )}
+      
       <div className="thought-detail-header">
         {editingTitle ? (
           <div className="thought-detail-title-edit">
@@ -172,16 +198,6 @@ export default function ThoughtDetail({
         <button
           className="thought-detail-action-btn"
           onClick={() => {
-            if (window.confirm('Delete this thought? This cannot be undone.')) {
-              onDelete(thought.id);
-            }
-          }}
-        >
-          Delete
-        </button>
-        <button
-          className="thought-detail-action-btn"
-          onClick={() => {
             // Placeholder for AI feature
             alert('AI feature coming soon!');
           }}
@@ -189,6 +205,33 @@ export default function ThoughtDetail({
           Ask AI about this thought
         </button>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete Thought</h3>
+            <p>Are you sure you want to delete this thought? This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button
+                className="account-button"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="account-button danger"
+                onClick={() => {
+                  onDelete(thought.id);
+                  setShowDeleteConfirm(false);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

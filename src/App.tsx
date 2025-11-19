@@ -1,21 +1,25 @@
 import { useState, useEffect, useRef } from 'react';
-import { Thought, ThoughtTag } from './types';
+import { Thought, ThoughtTag, User } from './types';
 import { useSpeechRecognition } from './useSpeechRecognition';
-import { getCurrentUser, deleteUser, signOut } from './auth';
+import { deleteUser, signOut, onAuthStateChange } from './auth';
 import LandingPage from './LandingPage';
 import ModeToggle from './ModeToggle';
 import CaptureView from './CaptureView';
 import LibraryView from './LibraryView';
-import { loadAllThoughts, saveAllThoughts, migrateOldData } from './dataStorage';
+import { saveAllThoughts, migrateOldData } from './dataStorage';
+import { subscribeToThoughts, saveThought, deleteThought } from './firebase/db';
+import { migrateThoughtsToFirebase } from './firebase/migration';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [mode, setMode] = useState<'capture' | 'library'>('capture');
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [selectedThoughtId, setSelectedThoughtId] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<ThoughtTag | 'All'>('All');
   const [isListening, setIsListening] = useState(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [_elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [livePreview, setLivePreview] = useState('');
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -32,6 +36,7 @@ function App() {
   const errorRef = useRef<string | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const finalTranscriptRef = useRef('');
+  const unsubscribeThoughtsRef = useRef<(() => void) | null>(null);
 
   // Keep refs in sync
   useEffect(() => {
@@ -42,10 +47,64 @@ function App() {
     errorRef.current = error;
   }, [error]);
 
-  // Check authentication on mount
+  // Listen to Firebase auth state changes
   useEffect(() => {
-    const user = getCurrentUser();
-    setIsAuthenticated(!!user);
+    setIsLoading(true);
+    const unsubscribe = onAuthStateChange(async (user) => {
+      if (user) {
+        setCurrentUser(user);
+        setIsAuthenticated(true);
+        
+        // Migrate localStorage data to Firestore on first login
+        try {
+          const migrationResult = await migrateThoughtsToFirebase(user.id);
+          if (migrationResult.success && migrationResult.migratedCount > 0) {
+            setToastMessage(`Migrated ${migrationResult.migratedCount} thoughts to cloud`);
+            setTimeout(() => setToastMessage(null), 5000);
+          }
+        } catch (error) {
+          console.error('Migration error:', error);
+        }
+        
+        // Set up real-time listener for thoughts
+        if (unsubscribeThoughtsRef.current) {
+          unsubscribeThoughtsRef.current();
+        }
+        
+        unsubscribeThoughtsRef.current = subscribeToThoughts(user.id, (updatedThoughts) => {
+          setThoughts(updatedThoughts);
+        });
+        
+        // Also try to migrate old session data
+        try {
+          const migrated = migrateOldData();
+          if (migrated.length > 0) {
+            // Save migrated thoughts to Firestore
+            await saveAllThoughts(migrated, user.id);
+          }
+        } catch (error) {
+          console.error('Error migrating old data:', error);
+        }
+      } else {
+        setCurrentUser(null);
+        setIsAuthenticated(false);
+        setThoughts([]);
+        
+        // Unsubscribe from thoughts listener
+        if (unsubscribeThoughtsRef.current) {
+          unsubscribeThoughtsRef.current();
+          unsubscribeThoughtsRef.current = null;
+        }
+      }
+      setIsLoading(false);
+    });
+
+    return () => {
+      unsubscribe();
+      if (unsubscribeThoughtsRef.current) {
+        unsubscribeThoughtsRef.current();
+      }
+    };
   }, []);
 
   // Apply theme
@@ -53,27 +112,6 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('dreamdelusion:theme', theme);
   }, [theme]);
-
-  // Load thoughts on mount
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    
-    // Try to migrate old data first
-    const migrated = migrateOldData();
-    if (migrated.length > 0) {
-      setThoughts(migrated);
-    } else {
-      const loaded = loadAllThoughts();
-      setThoughts(loaded);
-    }
-  }, [isAuthenticated]);
-
-  // Save thoughts whenever they change
-  useEffect(() => {
-    if (isAuthenticated && thoughts.length >= 0) {
-      saveAllThoughts(thoughts);
-    }
-  }, [thoughts, isAuthenticated]);
 
   // Timer
   useEffect(() => {
@@ -131,14 +169,61 @@ function App() {
     onResult: (transcript: string, isFinal: boolean) => {
       if (isFinal) {
         if (transcript.trim()) {
-          // Accumulate final transcripts
+          // Accumulate final transcripts with proper spacing
           const current = finalTranscriptRef.current;
-          finalTranscriptRef.current = current ? current + ' ' + transcript.trim() : transcript.trim();
+          const newText = transcript.trim();
+          // Only add if it's not already included (avoid duplicates)
+          if (!current || !current.endsWith(newText)) {
+            const updated = current 
+              ? (current + ' ' + newText).replace(/\s+/g, ' ').trim()
+              : newText;
+            
+            // Count words and reset if we reach 40 words
+            const wordCount = updated.split(/\s+/).filter(w => w.length > 0).length;
+            if (wordCount >= 40) {
+              // Reset to the last 20 words to keep some context
+              const words = updated.split(/\s+/).filter(w => w.length > 0);
+              const lastWords = words.slice(-20).join(' ');
+              finalTranscriptRef.current = lastWords;
+            } else {
+              finalTranscriptRef.current = updated;
+            }
+          }
         }
+        // Clear live preview when we get final results
         setLivePreview('');
       } else {
+        // For interim results, show the full accumulated text plus current interim
         if (transcript && transcript.trim()) {
-          setLivePreview(transcript);
+          const accumulated = finalTranscriptRef.current;
+          const fullPreview = accumulated 
+            ? (accumulated + ' ' + transcript.trim()).replace(/\s+/g, ' ').trim()
+            : transcript.trim();
+          
+          // Count words in preview and reset if needed
+          const wordCount = fullPreview.split(/\s+/).filter(w => w.length > 0).length;
+          if (wordCount >= 40) {
+            // Show only the last 20 words in preview
+            const words = fullPreview.split(/\s+/).filter(w => w.length > 0);
+            const lastWords = words.slice(-20).join(' ');
+            setLivePreview(lastWords);
+            // Also update the final transcript ref to match
+            finalTranscriptRef.current = lastWords;
+          } else {
+            setLivePreview(fullPreview);
+          }
+        } else if (finalTranscriptRef.current) {
+          // If no interim but we have accumulated text, show that
+          const accumulated = finalTranscriptRef.current;
+          const wordCount = accumulated.split(/\s+/).filter(w => w.length > 0).length;
+          if (wordCount >= 40) {
+            const words = accumulated.split(/\s+/).filter(w => w.length > 0);
+            const lastWords = words.slice(-20).join(' ');
+            setLivePreview(lastWords);
+            finalTranscriptRef.current = lastWords;
+          } else {
+            setLivePreview(accumulated);
+          }
         } else {
           setLivePreview('');
         }
@@ -147,30 +232,42 @@ function App() {
   });
 
   const handleAuthSuccess = () => {
-    setIsAuthenticated(true);
+    // Auth state will be updated by the auth state listener
   };
 
   const handleSkip = () => {
-    setIsAuthenticated(true);
+    // Skip functionality removed - users must authenticate
+    // This can be re-enabled if needed
   };
 
-  const handleSignOut = () => {
-    signOut();
-    setIsAuthenticated(false);
-    setThoughts([]);
-    setSelectedThoughtId(null);
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      // Auth state listener will handle the rest
+      setThoughts([]);
+      setSelectedThoughtId(null);
+    } catch (error) {
+      console.error('Sign out error:', error);
+      setError('Failed to sign out');
+    }
   };
 
   const handleDeleteAccount = async () => {
-    const user = getCurrentUser();
-    if (!user) return;
+    if (!currentUser) return;
 
-    const result = deleteUser(user.id);
-    if (result.success) {
-      setIsAuthenticated(false);
-      setThoughts([]);
-      setSelectedThoughtId(null);
-      setShowDeleteConfirm(false);
+    try {
+      const result = await deleteUser();
+      if (result.success) {
+        setThoughts([]);
+        setSelectedThoughtId(null);
+        setShowDeleteConfirm(false);
+        // Auth state listener will handle sign out
+      } else {
+        setError(result.error || 'Failed to delete account');
+      }
+    } catch (error: any) {
+      console.error('Delete account error:', error);
+      setError(error.message || 'Failed to delete account');
     }
   };
 
@@ -201,13 +298,13 @@ function App() {
     }
   };
 
-  const handleStopCapture = () => {
+  const handleStopCapture = async () => {
     stopRecognition();
     setIsListening(false);
     
     // Save thought if we have final transcript
     const textToSave = finalTranscriptRef.current.trim();
-    if (textToSave && recordingStartTimeRef.current) {
+    if (textToSave && recordingStartTimeRef.current && currentUser) {
       const duration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
       // Apply selected tag if one was chosen (not "All")
       const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
@@ -222,12 +319,18 @@ function App() {
         durationSeconds: duration,
       };
       
-      setThoughts(prev => [newThought, ...prev]);
-      setSelectedThoughtId(newThought.id);
-      setMode('library');
-      const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
-      setToastMessage(`Thought saved${tagMessage} · Tap to view in Library`);
-      setTimeout(() => setToastMessage(null), 3000);
+      // Save to Firestore (real-time listener will update state)
+      try {
+        await saveThought(newThought, currentUser.id);
+        setSelectedThoughtId(newThought.id);
+        setMode('library');
+        const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
+        setToastMessage(`Thought saved${tagMessage} · Tap to view in Library`);
+        setTimeout(() => setToastMessage(null), 3000);
+      } catch (error) {
+        console.error('Error saving thought:', error);
+        setError('Failed to save thought. Please try again.');
+      }
     }
     
     // Reset everything
@@ -238,28 +341,64 @@ function App() {
   };
 
 
-  const handleUpdateThought = (thought: Thought) => {
-    setThoughts(prev => prev.map(t => t.id === thought.id ? thought : t));
-  };
-
-  const handleDeleteThought = (id: string) => {
-    setThoughts(prev => prev.filter(t => t.id !== id));
-    if (selectedThoughtId === id) {
-      setSelectedThoughtId(null);
+  const handleUpdateThought = async (thought: Thought) => {
+    if (!currentUser) return;
+    
+    try {
+      await saveThought(thought, currentUser.id);
+      // Real-time listener will update state
+    } catch (error) {
+      console.error('Error updating thought:', error);
+      setError('Failed to update thought. Please try again.');
     }
   };
 
-  const handleDeleteAllThoughts = () => {
-    setThoughts([]);
-    setSelectedThoughtId(null);
-    setToastMessage('All thoughts deleted');
-    setTimeout(() => setToastMessage(null), 3000);
+  const handleDeleteThought = async (id: string) => {
+    if (!currentUser) return;
+    
+    try {
+      await deleteThought(id, currentUser.id);
+      // Real-time listener will update state
+      if (selectedThoughtId === id) {
+        setSelectedThoughtId(null);
+      }
+    } catch (error) {
+      console.error('Error deleting thought:', error);
+      setError('Failed to delete thought. Please try again.');
+    }
   };
 
-  const handlePinThought = (id: string) => {
-    setThoughts(prev => prev.map(t => 
-      t.id === id ? { ...t, pinned: !t.pinned } : t
-    ));
+  const handleDeleteAllThoughts = async () => {
+    if (!currentUser) return;
+    
+    try {
+      // Delete all thoughts from Firestore
+      const deletePromises = thoughts.map(thought => deleteThought(thought.id, currentUser.id));
+      await Promise.all(deletePromises);
+      // Real-time listener will update state
+      setSelectedThoughtId(null);
+      setToastMessage('All thoughts deleted');
+      setTimeout(() => setToastMessage(null), 3000);
+    } catch (error) {
+      console.error('Error deleting all thoughts:', error);
+      setError('Failed to delete all thoughts. Please try again.');
+    }
+  };
+
+  const handlePinThought = async (id: string) => {
+    if (!currentUser) return;
+    
+    const thought = thoughts.find(t => t.id === id);
+    if (!thought) return;
+    
+    try {
+      const updatedThought = { ...thought, pinned: !thought.pinned };
+      await saveThought(updatedThought, currentUser.id);
+      // Real-time listener will update state
+    } catch (error) {
+      console.error('Error pinning thought:', error);
+      setError('Failed to update thought. Please try again.');
+    }
   };
 
   // Close account menu when clicking outside
@@ -306,6 +445,22 @@ function App() {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
 
+  // Show loading state while checking authentication
+  if (isLoading) {
+    return (
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        height: '100vh',
+        backgroundColor: 'var(--bg-core)',
+        color: 'var(--text-primary)'
+      }}>
+        <div>Loading...</div>
+      </div>
+    );
+  }
+
   // Show landing page if not authenticated
   if (!isAuthenticated) {
     return (
@@ -332,7 +487,7 @@ function App() {
             {accountMenuOpen && (
               <div className="account-dropdown">
                 <div className="account-dropdown-header">
-                  {getCurrentUser()?.name || 'Guest User'}
+                  {currentUser?.name || 'Guest User'}
                 </div>
                 <div className="account-dropdown-divider"></div>
                 <button
@@ -358,7 +513,7 @@ function App() {
                     </>
                   )}
                 </button>
-                {getCurrentUser() ? (
+                {currentUser ? (
                   <>
                     <button
                       className="account-dropdown-item"
@@ -410,6 +565,7 @@ function App() {
         {mode === 'capture' ? (
           <CaptureView
             isListening={isListening}
+            livePreview={livePreview}
             onStartCapture={handleStartCapture}
             onStopCapture={handleStopCapture}
             speechSupported={speechSupported}

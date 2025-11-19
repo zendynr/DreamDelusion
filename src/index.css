@@ -1035,6 +1035,13 @@ body {
   z-index: 20;
 }
 
+@media (max-width: 768px) {
+  .app-top-bar {
+    padding: 0 12px;
+    height: 56px;
+  }
+}
+
 .app-top-bar-left {
   flex: 0 0 auto;
   display: flex;
@@ -1055,6 +1062,13 @@ body {
   overflow: hidden;
 }
 
+@media (max-width: 768px) {
+  .app-main-content {
+    margin-top: 56px;
+    height: calc(100vh - 56px);
+  }
+}
+
 /* Mode Toggle */
 .mode-toggle {
   display: flex;
@@ -1063,6 +1077,18 @@ body {
   border: 1px solid #27272a;
   border-radius: 8px;
   padding: 4px;
+}
+
+@media (max-width: 768px) {
+  .mode-toggle {
+    gap: 4px;
+    padding: 3px;
+  }
+  
+  .mode-toggle-btn {
+    padding: 6px 12px;
+    font-size: 0.85rem;
+  }
 }
 
 .mode-toggle-btn {
@@ -1091,6 +1117,7 @@ body {
 .capture-view-simple {
   height: 100%;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
 }
@@ -1177,6 +1204,65 @@ body {
     transform: scale(1.4);
     opacity: 0;
   }
+}
+
+/* Live Transcription - Apple Music Lyrics Style */
+.live-transcription {
+  margin-top: 16px;
+  max-width: 600px;
+  width: 100%;
+  padding: 0 24px;
+}
+
+.live-transcription-words {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 60px;
+}
+
+.live-word {
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1.6;
+  display: inline-block;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.live-word-past {
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+.live-word-current {
+  color: var(--text-primary);
+  opacity: 1;
+  font-weight: 500;
+  transform: scale(1.08);
+  animation: wordHighlight 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes wordHighlight {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+}
+
+.live-word-placeholder {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  opacity: 0.5;
+  font-style: italic;
 }
 
 /* Legacy Capture View (keeping for reference but not used) */
@@ -1392,6 +1478,7 @@ body {
   display: flex;
   height: 100%;
   overflow: hidden;
+  position: relative;
 }
 
 .library-sidebar {
@@ -1401,6 +1488,15 @@ body {
   flex-direction: column;
   background-color: var(--bg-core);
   overflow: hidden;
+  flex-shrink: 0;
+}
+
+/* Mobile: Full width sidebar */
+@media (max-width: 768px) {
+  .library-sidebar {
+    width: 100%;
+    border-right: none;
+  }
 }
 
 .library-filters {
@@ -1410,6 +1506,18 @@ body {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+@media (max-width: 768px) {
+  .library-filters {
+    padding: 12px;
+    gap: 6px;
+  }
+  
+  .library-filter-chip {
+    font-size: 0.8rem;
+    padding: 5px 10px;
+  }
 }
 
 .library-filter-chip {
@@ -1505,12 +1613,65 @@ body {
   border-color: #3f3f46;
 }
 
-.library-detail-panel {
+/* Desktop detail panel */
+.library-detail-panel-desktop {
   flex: 1;
   overflow-y: auto;
   background-color: var(--bg-core);
   scrollbar-width: thin;
   scrollbar-color: #3f3f46 transparent;
+  display: flex;
+}
+
+/* Mobile: Hide desktop panel */
+@media (max-width: 768px) {
+  .library-detail-panel-desktop {
+    display: none;
+  }
+}
+
+/* Mobile: Full-screen overlay for detail view */
+.library-detail-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+  .library-detail-overlay {
+    display: flex;
+  }
+}
+
+.library-detail-panel {
+  width: 100%;
+  height: 100%;
+  background-color: var(--bg-core);
+  overflow-y: auto;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+
+@media (min-width: 769px) {
+  .library-detail-overlay {
+    display: none !important;
+  }
+  
+  .library-detail-panel {
+    display: none;
+  }
 }
 
 /* Thought Card */
@@ -1656,6 +1817,66 @@ body {
   padding: 32px;
   max-width: 800px;
   margin: 0 auto;
+  position: relative;
+}
+
+.thought-detail-top-actions {
+  position: fixed;
+  top: 72px;
+  left: 16px;
+  display: none;
+  gap: 8px;
+  z-index: 101;
+}
+
+@media (max-width: 768px) {
+  .thought-detail-top-actions {
+    display: flex;
+    top: 64px;
+    left: 12px;
+  }
+  
+  .thought-detail {
+    padding: 16px;
+    padding-top: 80px;
+  }
+}
+
+.thought-detail-back-btn,
+.thought-detail-delete-top-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: var(--bg-panel);
+  border: 1px solid #27272a;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  z-index: 101;
+}
+
+.thought-detail-back-btn:hover {
+  background-color: #27272a;
+  transform: scale(1.1);
+}
+
+.thought-detail-delete-top-btn {
+  color: var(--danger);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.thought-detail-delete-top-btn:hover {
+  background-color: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.thought-detail-back-btn svg,
+.thought-detail-delete-top-btn svg {
+  width: 20px;
+  height: 20px;
 }
 
 .thought-detail-empty {

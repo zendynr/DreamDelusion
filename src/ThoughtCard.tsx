@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Thought, ThoughtTag } from './types';
 
 interface ThoughtCardProps {
@@ -48,22 +49,6 @@ const TagIcon = ({ tag }: { tag: ThoughtTag }) => {
   }
 };
 
-const formatTime = (timestamp: string): string => {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
-};
-
 const formatTimeOfDay = (timestamp: string): string => {
   const date = new Date(timestamp);
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -77,6 +62,7 @@ const formatDuration = (seconds: number): string => {
 };
 
 export default function ThoughtCard({ thought, isSelected, onClick, onPin, onDelete }: ThoughtCardProps) {
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const primaryTag = thought.tags.length > 0 ? thought.tags[0] : 'Random';
 
   return (
@@ -117,9 +103,7 @@ export default function ThoughtCard({ thought, isSelected, onClick, onPin, onDel
             className="thought-card-menu"
             onClick={(e) => {
               e.stopPropagation();
-              if (window.confirm('Delete this thought?')) {
-                onDelete(thought.id);
-              }
+              setShowDeleteConfirm(true);
             }}
             title="Delete"
           >
@@ -134,6 +118,33 @@ export default function ThoughtCard({ thought, isSelected, onClick, onPin, onDel
           {thought.tags.map((tag) => (
             <span key={tag} className="thought-tag-pill">{tag}</span>
           ))}
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Delete Thought</h3>
+            <p>Are you sure you want to delete this thought? This action cannot be undone.</p>
+            <div className="modal-actions">
+              <button
+                className="account-button"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="account-button danger"
+                onClick={() => {
+                  onDelete(thought.id);
+                  setShowDeleteConfirm(false);
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

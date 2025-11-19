@@ -27,6 +27,9 @@ export function useSpeechRecognition(callbacks: SpeechRecognitionCallbacks) {
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
+    // Improve accuracy settings
+    recognition.maxAlternatives = 1; // Use best alternative only
+    // Note: grammars and serviceURI are not widely supported, so we focus on what works
 
     recognition.onstart = () => {
       callbacksRef.current.onStart?.();
@@ -46,26 +49,36 @@ export function useSpeechRecognition(callbacks: SpeechRecognitionCallbacks) {
       let interimTranscript = '';
       
       // Process all results from resultIndex to the end
-      for (let i = event.resultIndex; i < event.results.length; i++) {
+      // This ensures we capture all final results that may have been missed
+      for (let i = 0; i < event.results.length; i++) {
         const result = event.results[i];
-        const transcript = result[0].transcript;
         
-        if (result.isFinal) {
-          // Accumulate final transcripts
-          finalTranscript += transcript + ' ';
-        } else {
-          // For interim, use the latest one
-          interimTranscript = transcript;
+        // Get the transcript - use the first alternative (most confident)
+        const transcript = result[0]?.transcript || '';
+        
+        if (result.isFinal && transcript.trim()) {
+          // Accumulate final transcripts with proper spacing
+          finalTranscript += (finalTranscript ? ' ' : '') + transcript.trim();
+        } else if (!result.isFinal) {
+          // For interim, build from all interim results for better accuracy
+          // This helps when speech recognition processes words in chunks
+          if (interimTranscript) {
+            interimTranscript += ' ' + transcript.trim();
+          } else {
+            interimTranscript = transcript.trim();
+          }
         }
       }
       
-      // Send final results if any
+      // Send final results if any (these are confirmed accurate)
       if (finalTranscript.trim()) {
         callbacksRef.current.onResult?.(finalTranscript.trim(), true);
       }
       
       // Send interim results (always, even if empty to clear)
-      callbacksRef.current.onResult?.(interimTranscript || '', false);
+      // Clean up the interim transcript to avoid duplicate words
+      const cleanedInterim = interimTranscript.trim().replace(/\s+/g, ' ');
+      callbacksRef.current.onResult?.(cleanedInterim || '', false);
     };
 
     recognitionRef.current = recognition;

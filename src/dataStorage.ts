@@ -1,9 +1,27 @@
 import { Thought } from './types';
+import { loadAllThoughts as loadFromFirestore, saveAllThoughts as saveToFirestore } from './firebase/db';
 
 const THOUGHTS_KEY = 'dreamdelusion:thoughts';
 
-// Load all thoughts from localStorage
-export function loadAllThoughts(): Thought[] {
+// Load all thoughts from Firestore (if userId provided) or localStorage (for migration)
+export async function loadAllThoughts(userId?: string): Promise<Thought[]> {
+  // If userId provided, load from Firestore
+  if (userId) {
+    try {
+      return await loadFromFirestore(userId);
+    } catch (error) {
+      console.error('Error loading thoughts from Firestore:', error);
+      // Fallback to localStorage if Firestore fails
+      return loadAllThoughtsFromLocalStorage();
+    }
+  }
+  
+  // Otherwise, load from localStorage (for migration)
+  return loadAllThoughtsFromLocalStorage();
+}
+
+// Load all thoughts from localStorage (for migration purposes)
+export function loadAllThoughtsFromLocalStorage(): Thought[] {
   try {
     const stored = localStorage.getItem(THOUGHTS_KEY);
     if (stored) {
@@ -18,17 +36,34 @@ export function loadAllThoughts(): Thought[] {
       });
     }
   } catch (e) {
-    console.error('Error loading thoughts:', e);
+    console.error('Error loading thoughts from localStorage:', e);
   }
   return [];
 }
 
-// Save all thoughts to localStorage
-export function saveAllThoughts(thoughts: Thought[]) {
+// Save all thoughts to Firestore (if userId provided) or localStorage (for migration)
+export async function saveAllThoughts(thoughts: Thought[], userId?: string): Promise<void> {
+  // If userId provided, save to Firestore
+  if (userId) {
+    try {
+      await saveToFirestore(thoughts, userId);
+      return;
+    } catch (error) {
+      console.error('Error saving thoughts to Firestore:', error);
+      throw error;
+    }
+  }
+  
+  // Otherwise, save to localStorage (for migration)
+  saveAllThoughtsToLocalStorage(thoughts);
+}
+
+// Save all thoughts to localStorage (for migration purposes)
+export function saveAllThoughtsToLocalStorage(thoughts: Thought[]) {
   try {
     localStorage.setItem(THOUGHTS_KEY, JSON.stringify(thoughts));
   } catch (e) {
-    console.error('Error saving thoughts:', e);
+    console.error('Error saving thoughts to localStorage:', e);
   }
 }
 

@@ -1,5 +1,6 @@
 interface CaptureViewProps {
   isListening: boolean;
+  livePreview: string;
   onStartCapture: () => void;
   onStopCapture: () => void;
   speechSupported: boolean;
@@ -7,6 +8,7 @@ interface CaptureViewProps {
 
 export default function CaptureView({
   isListening,
+  livePreview,
   onStartCapture,
   onStopCapture,
   speechSupported,
@@ -18,6 +20,9 @@ export default function CaptureView({
       onStartCapture();
     }
   };
+
+  // Split live preview into words for word-by-word animation
+  const words = livePreview.trim().split(/\s+/).filter(word => word.length > 0);
 
   return (
     <div className="capture-view-simple">
@@ -42,6 +47,28 @@ export default function CaptureView({
           </svg>
         )}
       </button>
+      
+      {isListening && (
+        <div className="live-transcription">
+          <div className="live-transcription-words">
+            {words.length > 0 ? (
+              words.map((word, index) => {
+                const isCurrent = index === words.length - 1;
+                return (
+                  <span
+                    key={`${word}-${index}-${Date.now()}`}
+                    className={`live-word ${isCurrent ? 'live-word-current' : 'live-word-past'}`}
+                  >
+                    {word}
+                  </span>
+                );
+              })
+            ) : (
+              <span className="live-word-placeholder">Listening...</span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

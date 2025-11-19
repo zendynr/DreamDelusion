@@ -161,13 +161,33 @@ export default function LibraryView({
         </div>
       </div>
 
-      <div className="library-detail-panel">
+      {selectedThought && (
+        <div className="library-detail-overlay" onClick={() => onSelectThought(null)}>
+          <div className="library-detail-panel" onClick={(e) => e.stopPropagation()}>
+            <ThoughtDetail
+              thought={selectedThought}
+              onUpdate={onUpdateThought}
+              onDelete={(id) => {
+                onDeleteThought(id);
+                onSelectThought(null);
+              }}
+              onPin={onPinThought}
+              onStartCapture={onStartCapture}
+              onClose={() => onSelectThought(null)}
+            />
+          </div>
+        </div>
+      )}
+      
+      {/* Desktop detail panel - hidden on mobile */}
+      <div className="library-detail-panel-desktop">
         <ThoughtDetail
           thought={selectedThought}
           onUpdate={onUpdateThought}
           onDelete={onDeleteThought}
           onPin={onPinThought}
           onStartCapture={onStartCapture}
+          onClose={undefined}
         />
       </div>
 
