@@ -16,6 +16,8 @@ const LibraryView = lazy(() => import('./LibraryView'));
 let finalTranscript = '';
 // Track the last processed final text to prevent duplicates
 let lastProcessedFinalText = '';
+// Track current interim text (not yet finalized)
+let currentInterimText = '';
 
 // Helper function to get last N words for display only
 function getLastWords(text: string, count: number = 20): string {
@@ -232,9 +234,12 @@ function App() {
         // For interim results, show the interim text live
         if (transcript && transcript.trim()) {
           // When user is speaking, show interim live
-          setLivePreview(transcript.trim());
+          const interimText = transcript.trim();
+          currentInterimText = interimText; // Track interim text for saving
+          setLivePreview(interimText);
         } else {
-          // When silent, show last 20 words of final transcript
+          // When silent, clear interim and show last 20 words of final transcript
+          currentInterimText = '';
           const tail = getLastWords(finalTranscript, 20);
           setLivePreview(tail || '');
         }
@@ -303,6 +308,7 @@ function App() {
     if (hasPermission) {
       finalTranscript = ''; // Reset global transcript
       lastProcessedFinalText = ''; // Reset duplicate tracking
+      currentInterimText = ''; // Reset interim text
       finalTranscriptRef.current = '';
       setLivePreview('');
       recordingStartTimeRef.current = Date.now();
@@ -315,8 +321,22 @@ function App() {
     stopRecognition();
     setIsListening(false);
     
-    // Save thought if we have final transcript - use global finalTranscript (FULL text, never trimmed)
-    const textToSave = finalTranscript.trim();
+    // Wait a brief moment for any final results that might be in flight
+    // This ensures we capture the last bit of speech before it's finalized
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    // Combine final transcript with any interim text that hasn't been finalized yet
+    // This ensures we capture everything, even if user stops mid-sentence
+    let completeText = finalTranscript.trim();
+    if (currentInterimText.trim()) {
+      // Add interim text to the final transcript
+      completeText = completeText 
+        ? (completeText + ' ' + currentInterimText.trim()).replace(/\s+/g, ' ').trim()
+        : currentInterimText.trim();
+    }
+    
+    // Save thought if we have any text (final or interim)
+    const textToSave = completeText;
     if (textToSave && recordingStartTimeRef.current) {
       const duration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
       // Apply selected tag if one was chosen (not "All")
@@ -383,6 +403,7 @@ function App() {
     // Reset everything only after local save succeeds
     finalTranscript = ''; // Reset global transcript
     lastProcessedFinalText = ''; // Reset duplicate tracking
+    currentInterimText = ''; // Reset interim text
     finalTranscriptRef.current = '';
     setLivePreview('');
     recordingStartTimeRef.current = null;
