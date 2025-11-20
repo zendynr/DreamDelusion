@@ -48,9 +48,10 @@ export function useSpeechRecognition(callbacks: SpeechRecognitionCallbacks) {
       let finalTranscript = '';
       let interimTranscript = '';
       
-      // Process all results from resultIndex to the end
-      // This ensures we capture all final results that may have been missed
-      for (let i = 0; i < event.results.length; i++) {
+      // Process only NEW results from resultIndex to the end
+      // This prevents processing the same results multiple times
+      const startIndex = event.resultIndex || 0;
+      for (let i = startIndex; i < event.results.length; i++) {
         const result = event.results[i];
         
         // Get the transcript - use the first alternative (most confident)

@@ -67,6 +67,21 @@ export function saveAllThoughtsToLocalStorage(thoughts: Thought[]) {
   }
 }
 
+// Save a single thought to localStorage (local-first approach)
+export function saveThoughtToLocalStorage(thought: Thought) {
+  try {
+    const existing = loadAllThoughtsFromLocalStorage();
+    // Remove existing thought with same ID if present, then add new one at the beginning
+    const filtered = existing.filter(t => t.id !== thought.id);
+    const updated = [thought, ...filtered];
+    localStorage.setItem(THOUGHTS_KEY, JSON.stringify(updated));
+    return true;
+  } catch (e) {
+    console.error('Error saving thought to localStorage:', e);
+    return false;
+  }
+}
+
 // Migrate old session-based data to new thought-based format
 export function migrateOldData(): Thought[] {
   try {

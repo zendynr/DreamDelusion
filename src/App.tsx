@@ -1,14 +1,28 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { Thought, ThoughtTag, User } from './types';
 import { useSpeechRecognition } from './useSpeechRecognition';
 import { deleteUser, signOut, onAuthStateChange } from './auth';
-import LandingPage from './LandingPage';
 import ModeToggle from './ModeToggle';
 import CaptureView from './CaptureView';
-import LibraryView from './LibraryView';
-import { saveAllThoughts, migrateOldData } from './dataStorage';
+import { saveAllThoughts, migrateOldData, saveThoughtToLocalStorage, loadAllThoughtsFromLocalStorage } from './dataStorage';
 import { subscribeToThoughts, saveThought, deleteThought } from './firebase/db';
 import { migrateThoughtsToFirebase } from './firebase/migration';
+
+// Lazy load heavy components for code splitting
+const LandingPage = lazy(() => import('./LandingPage'));
+const LibraryView = lazy(() => import('./LibraryView'));
+
+// Global variable to store the full transcript - never trimmed
+let finalTranscript = '';
+// Track the last processed final text to prevent duplicates
+let lastProcessedFinalText = '';
+
+// Helper function to get last N words for display only
+function getLastWords(text: string, count: number = 20): string {
+  const words = text.trim().split(/\s+/);
+  if (words.length <= count) return text.trim();
+  return words.slice(words.length - count).join(' ');
+}
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -72,6 +86,25 @@ function App() {
         }
         
         unsubscribeThoughtsRef.current = subscribeToThoughts(user.id, (updatedThoughts) => {
+          // Merge Firebase thoughts with localStorage thoughts
+          // This ensures locally saved thoughts (that haven't synced yet) are also shown
+          const localThoughts = loadAllThoughtsFromLocalStorage();
+          
+          // Create a map of Firebase thoughts by ID for quick lookup
+          const firebaseThoughtsMap = new Map(updatedThoughts.map(t => [t.id, t]));
+          
+          // Add any local thoughts that aren't in Firebase yet (unsynced)
+          localThoughts.forEach(localThought => {
+            if (!firebaseThoughtsMap.has(localThought.id)) {
+              updatedThoughts.push(localThought);
+            }
+          });
+          
+          // Sort by timestamp (newest first)
+          updatedThoughts.sort((a, b) => 
+            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+          );
+          
           setThoughts(updatedThoughts);
         });
         
@@ -169,63 +202,41 @@ function App() {
     onResult: (transcript: string, isFinal: boolean) => {
       if (isFinal) {
         if (transcript.trim()) {
-          // Accumulate final transcripts with proper spacing
-          const current = finalTranscriptRef.current;
+          // Accumulate final transcripts with proper spacing - NEVER trim the global variable
           const newText = transcript.trim();
-          // Only add if it's not already included (avoid duplicates)
-          if (!current || !current.endsWith(newText)) {
-            const updated = current 
-              ? (current + ' ' + newText).replace(/\s+/g, ' ').trim()
+          
+          // Prevent duplicates: check if this exact text was just processed
+          // Also check if it's already at the end of finalTranscript
+          const isDuplicate = newText === lastProcessedFinalText || 
+                             (finalTranscript && finalTranscript.endsWith(newText));
+          
+          if (!isDuplicate) {
+            finalTranscript = finalTranscript 
+              ? (finalTranscript + ' ' + newText).replace(/\s+/g, ' ').trim()
               : newText;
             
-            // Count words and reset if we reach 40 words
-            const wordCount = updated.split(/\s+/).filter(w => w.length > 0).length;
-            if (wordCount >= 40) {
-              // Reset to the last 20 words to keep some context
-              const words = updated.split(/\s+/).filter(w => w.length > 0);
-              const lastWords = words.slice(-20).join(' ');
-              finalTranscriptRef.current = lastWords;
-            } else {
-              finalTranscriptRef.current = updated;
-            }
+            // Track what we just processed
+            lastProcessedFinalText = newText;
+            
+            // Update ref for backward compatibility
+            finalTranscriptRef.current = finalTranscript;
+            
+            // Save full transcript to localStorage - NEVER trimmed
+            localStorage.setItem('zenThoughts', finalTranscript);
           }
         }
-        // Clear live preview when we get final results
-        setLivePreview('');
+        // When silent, show last 20 words of final transcript
+        const tail = getLastWords(finalTranscript, 20);
+        setLivePreview(tail || '');
       } else {
-        // For interim results, show the full accumulated text plus current interim
+        // For interim results, show the interim text live
         if (transcript && transcript.trim()) {
-          const accumulated = finalTranscriptRef.current;
-          const fullPreview = accumulated 
-            ? (accumulated + ' ' + transcript.trim()).replace(/\s+/g, ' ').trim()
-            : transcript.trim();
-          
-          // Count words in preview and reset if needed
-          const wordCount = fullPreview.split(/\s+/).filter(w => w.length > 0).length;
-          if (wordCount >= 40) {
-            // Show only the last 20 words in preview
-            const words = fullPreview.split(/\s+/).filter(w => w.length > 0);
-            const lastWords = words.slice(-20).join(' ');
-            setLivePreview(lastWords);
-            // Also update the final transcript ref to match
-            finalTranscriptRef.current = lastWords;
-          } else {
-            setLivePreview(fullPreview);
-          }
-        } else if (finalTranscriptRef.current) {
-          // If no interim but we have accumulated text, show that
-          const accumulated = finalTranscriptRef.current;
-          const wordCount = accumulated.split(/\s+/).filter(w => w.length > 0).length;
-          if (wordCount >= 40) {
-            const words = accumulated.split(/\s+/).filter(w => w.length > 0);
-            const lastWords = words.slice(-20).join(' ');
-            setLivePreview(lastWords);
-            finalTranscriptRef.current = lastWords;
-          } else {
-            setLivePreview(accumulated);
-          }
+          // When user is speaking, show interim live
+          setLivePreview(transcript.trim());
         } else {
-          setLivePreview('');
+          // When silent, show last 20 words of final transcript
+          const tail = getLastWords(finalTranscript, 20);
+          setLivePreview(tail || '');
         }
       }
     },
@@ -290,6 +301,8 @@ function App() {
   const handleStartCapture = async () => {
     const hasPermission = await requestMicrophonePermission();
     if (hasPermission) {
+      finalTranscript = ''; // Reset global transcript
+      lastProcessedFinalText = ''; // Reset duplicate tracking
       finalTranscriptRef.current = '';
       setLivePreview('');
       recordingStartTimeRef.current = Date.now();
@@ -302,9 +315,9 @@ function App() {
     stopRecognition();
     setIsListening(false);
     
-    // Save thought if we have final transcript
-    const textToSave = finalTranscriptRef.current.trim();
-    if (textToSave && recordingStartTimeRef.current && currentUser) {
+    // Save thought if we have final transcript - use global finalTranscript (FULL text, never trimmed)
+    const textToSave = finalTranscript.trim();
+    if (textToSave && recordingStartTimeRef.current) {
       const duration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
       // Apply selected tag if one was chosen (not "All")
       const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
@@ -312,28 +325,64 @@ function App() {
       const newThought: Thought = {
         id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
         timestamp: new Date().toISOString(),
-        text: textToSave,
+        text: textToSave, // FULL transcript, never trimmed
         title: textToSave.substring(0, 50) + (textToSave.length > 50 ? '...' : ''),
         tags: tags,
         pinned: false,
         durationSeconds: duration,
       };
       
-      // Save to Firestore (real-time listener will update state)
-      try {
-        await saveThought(newThought, currentUser.id);
-        setSelectedThoughtId(newThought.id);
-        setMode('library');
-        const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
-        setToastMessage(`Thought saved${tagMessage} · Tap to view in Library`);
-        setTimeout(() => setToastMessage(null), 3000);
-      } catch (error) {
-        console.error('Error saving thought:', error);
-        setError('Failed to save thought. Please try again.');
+      // STEP 1: Save to localStorage FIRST (synchronously, immediately)
+      // This ensures we never lose the transcript even if network fails
+      const localSaveSuccess = saveThoughtToLocalStorage(newThought);
+      
+      if (!localSaveSuccess) {
+        setError('Failed to save thought locally. Please try again.');
+        // Don't reset transcript if local save failed
+        return;
+      }
+      
+      // Update UI immediately with locally saved thought
+      // Add to thoughts state immediately so it shows up in library view right away
+      setThoughts(prev => {
+        // Check if thought already exists (shouldn't, but just in case)
+        const exists = prev.find(t => t.id === newThought.id);
+        if (exists) return prev;
+        // Add new thought at the beginning
+        return [newThought, ...prev];
+      });
+      
+      setSelectedThoughtId(newThought.id);
+      setMode('library');
+      const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
+      setToastMessage(`Thought saved locally${tagMessage} · Syncing to cloud...`);
+      setTimeout(() => setToastMessage(null), 3000);
+      
+      // STEP 2: Sync to Firebase in the background (async, non-blocking)
+      // If user is authenticated, try to sync to cloud
+      if (currentUser) {
+        // Don't await - let it sync in background
+        saveThought(newThought, currentUser.id)
+          .then(() => {
+            // Successfully synced to cloud
+            console.log('Thought synced to Firebase successfully');
+            // Update toast to indicate cloud sync completed
+            setToastMessage(`Thought synced to cloud${tagMessage}`);
+            setTimeout(() => setToastMessage(null), 2000);
+          })
+          .catch((error) => {
+            // Failed to sync, but data is safe in localStorage
+            console.error('Error syncing thought to Firebase:', error);
+            // Show a non-critical warning - data is still saved locally
+            setToastMessage(`Saved locally. Cloud sync failed - will retry later.`);
+            setTimeout(() => setToastMessage(null), 4000);
+          });
       }
     }
     
-    // Reset everything
+    // Reset everything only after local save succeeds
+    finalTranscript = ''; // Reset global transcript
+    lastProcessedFinalText = ''; // Reset duplicate tracking
     finalTranscriptRef.current = '';
     setLivePreview('');
     recordingStartTimeRef.current = null;
@@ -464,7 +513,20 @@ function App() {
   // Show landing page if not authenticated
   if (!isAuthenticated) {
     return (
-      <LandingPage onAuthSuccess={handleAuthSuccess} onSkip={handleSkip} theme={theme} />
+      <Suspense fallback={
+        <div style={{ 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          height: '100vh',
+          backgroundColor: 'var(--bg-core)',
+          color: 'var(--text-primary)'
+        }}>
+          <div>Loading...</div>
+        </div>
+      }>
+        <LandingPage onAuthSuccess={handleAuthSuccess} onSkip={handleSkip} theme={theme} />
+      </Suspense>
     );
   }
 
@@ -571,18 +633,31 @@ function App() {
             speechSupported={speechSupported}
           />
         ) : (
-          <LibraryView
-            thoughts={thoughts}
-            selectedThoughtId={selectedThoughtId}
-            selectedTag={selectedTag}
-            onSelectThought={setSelectedThoughtId}
-            onUpdateThought={handleUpdateThought}
-            onDeleteThought={handleDeleteThought}
-            onDeleteAllThoughts={handleDeleteAllThoughts}
-            onPinThought={handlePinThought}
-            onStartCapture={() => setMode('capture')}
-            onTagChange={setSelectedTag}
-          />
+          <Suspense fallback={
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'center', 
+              alignItems: 'center', 
+              height: '100%',
+              backgroundColor: 'var(--bg-core)',
+              color: 'var(--text-primary)'
+            }}>
+              <div>Loading library...</div>
+            </div>
+          }>
+            <LibraryView
+              thoughts={thoughts}
+              selectedThoughtId={selectedThoughtId}
+              selectedTag={selectedTag}
+              onSelectThought={setSelectedThoughtId}
+              onUpdateThought={handleUpdateThought}
+              onDeleteThought={handleDeleteThought}
+              onDeleteAllThoughts={handleDeleteAllThoughts}
+              onPinThought={handlePinThought}
+              onStartCapture={() => setMode('capture')}
+              onTagChange={setSelectedTag}
+            />
+          </Suspense>
         )}
       </div>
 
