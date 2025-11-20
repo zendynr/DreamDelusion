@@ -172,7 +172,7 @@ export default function LandingPage({ onAuthSuccess, theme = 'dark' }: { onAuthS
             <br />
             No distractions, just you and your mind.
             <br />
-            From ZoneBros Studios
+            From ZoneBroz Studios
           </p>
         </div>
       </div>
