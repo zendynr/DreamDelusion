@@ -29,7 +29,7 @@ function App() {
   const [selectedThoughtId, setSelectedThoughtId] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<ThoughtTag | 'All'>('All');
   const [isListening, setIsListening] = useState(false);
-  const [_elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [livePreview, setLivePreview] = useState('');
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -150,6 +150,8 @@ function App() {
     };
   }, [isListening]);
 
+  const startRecognitionRef = useRef<(() => void) | null>(null);
+  
   const { start: startRecognition, stop: stopRecognition, isSupported } = useSpeechRecognition({
     onStart: () => {
       setIsListening(true);
@@ -158,8 +160,21 @@ function App() {
       }
     },
     onEnd: () => {
-      // Don't auto-restart - user controls when to record
-      setIsListening(false);
+      // Don't auto-stop - keep listening until user clicks stop
+      // Only restart if we're still supposed to be listening
+      if (isListeningRef.current && startRecognitionRef.current) {
+        // Use setTimeout to avoid immediate restart issues
+        setTimeout(() => {
+          if (isListeningRef.current && startRecognitionRef.current) {
+            try {
+              startRecognitionRef.current();
+            } catch (e) {
+              // Recognition might already be running, ignore
+              console.log('Recognition restart:', e);
+            }
+          }
+        }, 100);
+      }
     },
     onError: (errorMsg: string) => {
       if (errorMsg === 'not-allowed' || errorMsg === 'service-not-allowed') {
@@ -261,6 +276,7 @@ function App() {
       setLivePreview('');
       recordingStartTimeRef.current = Date.now();
       setElapsedSeconds(0);
+      startRecognitionRef.current = startRecognition;
       startRecognition();
     }
   };
@@ -537,6 +553,7 @@ function App() {
           <CaptureView
             isListening={isListening}
             livePreview={livePreview}
+            elapsedSeconds={elapsedSeconds}
             onStartCapture={handleStartCapture}
             onStopCapture={handleStopCapture}
             speechSupported={speechSupported}

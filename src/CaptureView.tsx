@@ -1,6 +1,7 @@
 interface CaptureViewProps {
   isListening: boolean;
   livePreview: string;
+  elapsedSeconds: number;
   onStartCapture: () => void;
   onStopCapture: () => void;
   speechSupported: boolean;
@@ -9,6 +10,7 @@ interface CaptureViewProps {
 export default function CaptureView({
   isListening,
   livePreview,
+  elapsedSeconds,
   onStartCapture,
   onStopCapture,
   speechSupported,
@@ -23,6 +25,13 @@ export default function CaptureView({
 
   // Split live preview into words for word-by-word animation
   const words = livePreview.trim().split(/\s+/).filter(word => word.length > 0);
+
+  // Format timer as MM:SS
+  const formatTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
 
   return (
     <div className="capture-view-simple">
@@ -47,6 +56,19 @@ export default function CaptureView({
           </svg>
         )}
       </button>
+      
+      {isListening && (
+        <div className="recording-timer" style={{
+          textAlign: 'center',
+          marginTop: '16px',
+          fontSize: '0.9rem',
+          color: 'var(--text-secondary)',
+          fontFamily: 'monospace',
+          fontWeight: '500'
+        }}>
+          {formatTime(elapsedSeconds)}
+        </div>
+      )}
       
       {isListening && (
         <div className="live-transcription">
