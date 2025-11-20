@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { signUp, signIn, signInWithGoogle, signInAnonymously } from './auth';
+import { signUp, signIn, signInWithGoogle } from './auth';
 import Logo from './Logo';
 
 type AuthMode = 'login' | 'signup';
 
-export default function LandingPage({ onAuthSuccess, onSkip, theme = 'dark' }: { onAuthSuccess: () => void; onSkip: () => void; theme?: 'dark' | 'light' }) {
+export default function LandingPage({ onAuthSuccess, theme = 'dark' }: { onAuthSuccess: () => void; theme?: 'dark' | 'light' }) {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -163,33 +163,6 @@ export default function LandingPage({ onAuthSuccess, onSkip, theme = 'dark' }: {
               Continue with Google
             </button>
 
-            <button
-              type="button"
-              className="auth-provider-button anonymous-button"
-              onClick={async () => {
-                setError('');
-                setLoading(true);
-                try {
-                  const result = await signInAnonymously();
-                  if (result.success && result.user) {
-                    onAuthSuccess();
-                  } else {
-                    setError(result.error || 'Anonymous sign in failed');
-                  }
-                } catch (err: any) {
-                  console.error('Anonymous auth error:', err);
-                  setError(err.message || 'An unexpected error occurred');
-                } finally {
-                  setLoading(false);
-                }
-              }}
-              disabled={loading}
-            >
-              <svg className="anonymous-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-              </svg>
-              Continue as Guest
-            </button>
           </div>
         </div>
 
@@ -199,12 +172,6 @@ export default function LandingPage({ onAuthSuccess, onSkip, theme = 'dark' }: {
             <br />
             No distractions, just you and your mind.
           </p>
-          <button
-            onClick={onSkip}
-            className="skip-button"
-          >
-            Skip for now
-          </button>
         </div>
       </div>
     </div>

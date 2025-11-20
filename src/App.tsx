@@ -1,30 +1,24 @@
-import { useState, useEffect, useRef, Suspense, lazy } from 'react';
+import { useState, useEffect, useRef, Suspense, lazy, useCallback } from 'react';
 import { Thought, ThoughtTag, User } from './types';
 import { useSpeechRecognition } from './useSpeechRecognition';
 import { deleteUser, signOut, onAuthStateChange } from './auth';
 import ModeToggle from './ModeToggle';
 import CaptureView from './CaptureView';
+import LoadingSpinner from './components/LoadingSpinner';
+import Toast from './components/Toast';
+import ErrorMessage from './components/ErrorMessage';
 import { saveAllThoughts, migrateOldData, saveThoughtToLocalStorage, loadAllThoughtsFromLocalStorage } from './dataStorage';
 import { subscribeToThoughts, saveThought, deleteThought } from './firebase/db';
 import { migrateThoughtsToFirebase } from './firebase/migration';
+import { useTranscript } from './hooks/useTranscript';
+import { useToast } from './hooks/useToast';
+import { getLastWords } from './utils/transcript';
+import { createThought, mergeThoughts } from './utils/thoughtHelpers';
+import { STORAGE_KEYS, TOAST_DURATIONS, TRANSCRIPT_CONFIG } from './utils/constants';
 
 // Lazy load heavy components for code splitting
 const LandingPage = lazy(() => import('./LandingPage'));
 const LibraryView = lazy(() => import('./LibraryView'));
-
-// Global variable to store the full transcript - never trimmed
-let finalTranscript = '';
-// Track the last processed final text to prevent duplicates
-let lastProcessedFinalText = '';
-// Track current interim text (not yet finalized)
-let currentInterimText = '';
-
-// Helper function to get last N words for display only
-function getLastWords(text: string, count: number = 20): string {
-  const words = text.trim().split(/\s+/);
-  if (words.length <= count) return text.trim();
-  return words.slice(words.length - count).join(' ');
-}
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -41,10 +35,12 @@ function App() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
-    const saved = localStorage.getItem('dreamdelusion:theme');
+    const saved = localStorage.getItem(STORAGE_KEYS.THEME);
     return (saved === 'light' || saved === 'dark') ? saved : 'dark';
   });
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  
+  const { toastMessage, showToast } = useToast();
+  const transcript = useTranscript();
   
   const timerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const recordingStartTimeRef = useRef<number | null>(null);
@@ -75,8 +71,7 @@ function App() {
         try {
           const migrationResult = await migrateThoughtsToFirebase(user.id);
           if (migrationResult.success && migrationResult.migratedCount > 0) {
-            setToastMessage(`Migrated ${migrationResult.migratedCount} thoughts to cloud`);
-            setTimeout(() => setToastMessage(null), 5000);
+            showToast(`Migrated ${migrationResult.migratedCount} thoughts to cloud`, TOAST_DURATIONS.LONG);
           }
         } catch (error) {
           console.error('Migration error:', error);
@@ -89,25 +84,9 @@ function App() {
         
         unsubscribeThoughtsRef.current = subscribeToThoughts(user.id, (updatedThoughts) => {
           // Merge Firebase thoughts with localStorage thoughts
-          // This ensures locally saved thoughts (that haven't synced yet) are also shown
           const localThoughts = loadAllThoughtsFromLocalStorage();
-          
-          // Create a map of Firebase thoughts by ID for quick lookup
-          const firebaseThoughtsMap = new Map(updatedThoughts.map(t => [t.id, t]));
-          
-          // Add any local thoughts that aren't in Firebase yet (unsynced)
-          localThoughts.forEach(localThought => {
-            if (!firebaseThoughtsMap.has(localThought.id)) {
-              updatedThoughts.push(localThought);
-            }
-          });
-          
-          // Sort by timestamp (newest first)
-          updatedThoughts.sort((a, b) => 
-            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-          );
-          
-          setThoughts(updatedThoughts);
+          const merged = mergeThoughts([...updatedThoughts], localThoughts);
+          setThoughts(merged);
         });
         
         // Also try to migrate old session data
@@ -145,7 +124,7 @@ function App() {
   // Apply theme
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
-    localStorage.setItem('dreamdelusion:theme', theme);
+    localStorage.setItem(STORAGE_KEYS.THEME, theme);
   }, [theme]);
 
   // Timer
@@ -201,47 +180,23 @@ function App() {
         }
       }
     },
-    onResult: (transcript: string, isFinal: boolean) => {
+    onResult: (transcriptText: string, isFinal: boolean) => {
       if (isFinal) {
-        if (transcript.trim()) {
-          // Accumulate final transcripts with proper spacing - NEVER trim the global variable
-          const newText = transcript.trim();
-          
-          // Prevent duplicates: check if this exact text was just processed
-          // Also check if it's already at the end of finalTranscript
-          const isDuplicate = newText === lastProcessedFinalText || 
-                             (finalTranscript && finalTranscript.endsWith(newText));
-          
-          if (!isDuplicate) {
-            finalTranscript = finalTranscript 
-              ? (finalTranscript + ' ' + newText).replace(/\s+/g, ' ').trim()
-              : newText;
-            
-            // Track what we just processed
-            lastProcessedFinalText = newText;
-            
-            // Update ref for backward compatibility
-            finalTranscriptRef.current = finalTranscript;
-            
-            // Save full transcript to localStorage - NEVER trimmed
-            localStorage.setItem('zenThoughts', finalTranscript);
-          }
+        if (transcriptText.trim() && transcript.addFinalText(transcriptText.trim())) {
+          const finalText = transcript.getFinalTranscript();
+          finalTranscriptRef.current = finalText;
+          localStorage.setItem(STORAGE_KEYS.ZEN_THOUGHTS, finalText);
         }
-        // When silent, show last 20 words of final transcript
-        const tail = getLastWords(finalTranscript, 20);
-        setLivePreview(tail || '');
+        const tail = getLastWords(transcript.getFinalTranscript(), TRANSCRIPT_CONFIG.PREVIEW_WORD_COUNT);
+        setLivePreview(tail);
       } else {
-        // For interim results, show the interim text live
-        if (transcript && transcript.trim()) {
-          // When user is speaking, show interim live
-          const interimText = transcript.trim();
-          currentInterimText = interimText; // Track interim text for saving
-          setLivePreview(interimText);
+        if (transcriptText && transcriptText.trim()) {
+          transcript.setInterimText(transcriptText.trim());
+          setLivePreview(transcriptText.trim());
         } else {
-          // When silent, clear interim and show last 20 words of final transcript
-          currentInterimText = '';
-          const tail = getLastWords(finalTranscript, 20);
-          setLivePreview(tail || '');
+          transcript.clearInterimText();
+          const tail = getLastWords(transcript.getFinalTranscript(), TRANSCRIPT_CONFIG.PREVIEW_WORD_COUNT);
+          setLivePreview(tail);
         }
       }
     },
@@ -249,11 +204,6 @@ function App() {
 
   const handleAuthSuccess = () => {
     // Auth state will be updated by the auth state listener
-  };
-
-  const handleSkip = () => {
-    // Skip functionality removed - users must authenticate
-    // This can be re-enabled if needed
   };
 
   const handleSignOut = async () => {
@@ -306,9 +256,7 @@ function App() {
   const handleStartCapture = async () => {
     const hasPermission = await requestMicrophonePermission();
     if (hasPermission) {
-      finalTranscript = ''; // Reset global transcript
-      lastProcessedFinalText = ''; // Reset duplicate tracking
-      currentInterimText = ''; // Reset interim text
+      transcript.resetTranscript();
       finalTranscriptRef.current = '';
       setLivePreview('');
       recordingStartTimeRef.current = Date.now();
@@ -317,98 +265,63 @@ function App() {
     }
   };
 
-  const handleStopCapture = async () => {
+  const handleStopCapture = useCallback(async () => {
     stopRecognition();
     setIsListening(false);
     
-    // Wait a brief moment for any final results that might be in flight
-    // This ensures we capture the last bit of speech before it's finalized
-    await new Promise(resolve => setTimeout(resolve, 300));
+    // Wait for any final results that might be in flight
+    await new Promise(resolve => setTimeout(resolve, TRANSCRIPT_CONFIG.FINAL_RESULT_DELAY_MS));
     
-    // Combine final transcript with any interim text that hasn't been finalized yet
-    // This ensures we capture everything, even if user stops mid-sentence
-    let completeText = finalTranscript.trim();
-    if (currentInterimText.trim()) {
-      // Add interim text to the final transcript
-      completeText = completeText 
-        ? (completeText + ' ' + currentInterimText.trim()).replace(/\s+/g, ' ').trim()
-        : currentInterimText.trim();
+    // Get complete text (final + interim)
+    const textToSave = transcript.getCompleteText();
+    
+    if (!textToSave || !recordingStartTimeRef.current) {
+      transcript.resetTranscript();
+      setLivePreview('');
+      recordingStartTimeRef.current = null;
+      return;
+    }
+
+    const duration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
+    const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
+    const newThought = createThought(textToSave, tags, duration);
+    
+    // Save locally first
+    if (!saveThoughtToLocalStorage(newThought)) {
+      setError('Failed to save thought locally. Please try again.');
+      return;
     }
     
-    // Save thought if we have any text (final or interim)
-    const textToSave = completeText;
-    if (textToSave && recordingStartTimeRef.current) {
-      const duration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
-      // Apply selected tag if one was chosen (not "All")
-      const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
-      
-      const newThought: Thought = {
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        timestamp: new Date().toISOString(),
-        text: textToSave, // FULL transcript, never trimmed
-        title: textToSave.substring(0, 50) + (textToSave.length > 50 ? '...' : ''),
-        tags: tags,
-        pinned: false,
-        durationSeconds: duration,
-      };
-      
-      // STEP 1: Save to localStorage FIRST (synchronously, immediately)
-      // This ensures we never lose the transcript even if network fails
-      const localSaveSuccess = saveThoughtToLocalStorage(newThought);
-      
-      if (!localSaveSuccess) {
-        setError('Failed to save thought locally. Please try again.');
-        // Don't reset transcript if local save failed
-        return;
-      }
-      
-      // Update UI immediately with locally saved thought
-      // Add to thoughts state immediately so it shows up in library view right away
-      setThoughts(prev => {
-        // Check if thought already exists (shouldn't, but just in case)
-        const exists = prev.find(t => t.id === newThought.id);
-        if (exists) return prev;
-        // Add new thought at the beginning
-        return [newThought, ...prev];
-      });
-      
-      setSelectedThoughtId(newThought.id);
-      setMode('library');
-      const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
-      setToastMessage(`Thought saved locally${tagMessage} · Syncing to cloud...`);
-      setTimeout(() => setToastMessage(null), 3000);
-      
-      // STEP 2: Sync to Firebase in the background (async, non-blocking)
-      // If user is authenticated, try to sync to cloud
-      if (currentUser) {
-        // Don't await - let it sync in background
-        saveThought(newThought, currentUser.id)
-          .then(() => {
-            // Successfully synced to cloud
-            console.log('Thought synced to Firebase successfully');
-            // Update toast to indicate cloud sync completed
-            setToastMessage(`Thought synced to cloud${tagMessage}`);
-            setTimeout(() => setToastMessage(null), 2000);
-          })
-          .catch((error) => {
-            // Failed to sync, but data is safe in localStorage
-            console.error('Error syncing thought to Firebase:', error);
-            // Show a non-critical warning - data is still saved locally
-            setToastMessage(`Saved locally. Cloud sync failed - will retry later.`);
-            setTimeout(() => setToastMessage(null), 4000);
-          });
-      }
+    // Update UI immediately
+    setThoughts(prev => {
+      if (prev.find(t => t.id === newThought.id)) return prev;
+      return [newThought, ...prev];
+    });
+    
+    setSelectedThoughtId(newThought.id);
+    setMode('library');
+    const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
+    showToast(`Thought saved locally${tagMessage} · Syncing to cloud...`, TOAST_DURATIONS.NORMAL);
+    
+    // Sync to Firebase in background
+    if (currentUser) {
+      saveThought(newThought, currentUser.id)
+        .then(() => {
+          showToast(`Thought synced to cloud${tagMessage}`, TOAST_DURATIONS.SHORT);
+        })
+        .catch((error) => {
+          console.error('Error syncing thought to Firebase:', error);
+          showToast('Saved locally. Cloud sync failed - will retry later.', TOAST_DURATIONS.LONG);
+        });
     }
     
-    // Reset everything only after local save succeeds
-    finalTranscript = ''; // Reset global transcript
-    lastProcessedFinalText = ''; // Reset duplicate tracking
-    currentInterimText = ''; // Reset interim text
+    // Reset after save
+    transcript.resetTranscript();
     finalTranscriptRef.current = '';
     setLivePreview('');
     recordingStartTimeRef.current = null;
     setElapsedSeconds(0);
-  };
+  }, [transcript, selectedTag, currentUser, showToast]);
 
 
   const handleUpdateThought = async (thought: Thought) => {
@@ -447,8 +360,7 @@ function App() {
       await Promise.all(deletePromises);
       // Real-time listener will update state
       setSelectedThoughtId(null);
-      setToastMessage('All thoughts deleted');
-      setTimeout(() => setToastMessage(null), 3000);
+      showToast('All thoughts deleted', TOAST_DURATIONS.NORMAL);
     } catch (error) {
       console.error('Error deleting all thoughts:', error);
       setError('Failed to delete all thoughts. Please try again.');
@@ -515,38 +427,14 @@ function App() {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
 
-  // Show loading state while checking authentication
   if (isLoading) {
-    return (
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh',
-        backgroundColor: 'var(--bg-core)',
-        color: 'var(--text-primary)'
-      }}>
-        <div>Loading...</div>
-      </div>
-    );
+    return <LoadingSpinner />;
   }
 
-  // Show landing page if not authenticated
   if (!isAuthenticated) {
     return (
-      <Suspense fallback={
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          alignItems: 'center', 
-          height: '100vh',
-          backgroundColor: 'var(--bg-core)',
-          color: 'var(--text-primary)'
-        }}>
-          <div>Loading...</div>
-        </div>
-      }>
-        <LandingPage onAuthSuccess={handleAuthSuccess} onSkip={handleSkip} theme={theme} />
+      <Suspense fallback={<LoadingSpinner />}>
+        <LandingPage onAuthSuccess={handleAuthSuccess} theme={theme} />
       </Suspense>
     );
   }
@@ -570,7 +458,7 @@ function App() {
             {accountMenuOpen && (
               <div className="account-dropdown">
                 <div className="account-dropdown-header">
-                  {currentUser?.name || 'Guest User'}
+                  {currentUser?.name || 'User'}
                 </div>
                 <div className="account-dropdown-divider"></div>
                 <button
@@ -654,18 +542,7 @@ function App() {
             speechSupported={speechSupported}
           />
         ) : (
-          <Suspense fallback={
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'center', 
-              alignItems: 'center', 
-              height: '100%',
-              backgroundColor: 'var(--bg-core)',
-              color: 'var(--text-primary)'
-            }}>
-              <div>Loading library...</div>
-            </div>
-          }>
+          <Suspense fallback={<LoadingSpinner message="Loading library..." />}>
             <LibraryView
               thoughts={thoughts}
               selectedThoughtId={selectedThoughtId}
@@ -682,19 +559,7 @@ function App() {
         )}
       </div>
 
-      {/* Error Messages */}
-      {error && (
-        <div className="error-message" style={{ position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 100 }}>
-          {error}
-          <button
-            className="error-dismiss"
-            onClick={() => setError(null)}
-            title="Dismiss"
-          >
-            ×
-          </button>
-        </div>
-      )}
+      <ErrorMessage error={error} onDismiss={() => setError(null)} />
 
       {!speechSupported && (
         <div className="error-message" style={{ position: 'fixed', bottom: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 100, maxWidth: '90%', padding: '16px' }}>
@@ -724,12 +589,7 @@ function App() {
         </div>
       )}
 
-      {/* Toast Message */}
-      {toastMessage && (
-        <div className="toast-message">
-          {toastMessage}
-        </div>
-      )}
+      <Toast message={toastMessage} />
 
       {/* Delete Account Confirmation Modal */}
       {showDeleteConfirm && (

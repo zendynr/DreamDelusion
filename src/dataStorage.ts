@@ -1,7 +1,6 @@
 import { Thought } from './types';
 import { loadAllThoughts as loadFromFirestore, saveAllThoughts as saveToFirestore } from './firebase/db';
-
-const THOUGHTS_KEY = 'dreamdelusion:thoughts';
+import { STORAGE_KEYS } from './utils/constants';
 
 // Load all thoughts from Firestore (if userId provided) or localStorage (for migration)
 export async function loadAllThoughts(userId?: string): Promise<Thought[]> {
@@ -23,7 +22,7 @@ export async function loadAllThoughts(userId?: string): Promise<Thought[]> {
 // Load all thoughts from localStorage (for migration purposes)
 export function loadAllThoughtsFromLocalStorage(): Thought[] {
   try {
-    const stored = localStorage.getItem(THOUGHTS_KEY);
+    const stored = localStorage.getItem(STORAGE_KEYS.THOUGHTS);
     if (stored) {
       const parsed = JSON.parse(stored);
       // Migrate old format if needed
@@ -61,7 +60,7 @@ export async function saveAllThoughts(thoughts: Thought[], userId?: string): Pro
 // Save all thoughts to localStorage (for migration purposes)
 export function saveAllThoughtsToLocalStorage(thoughts: Thought[]) {
   try {
-    localStorage.setItem(THOUGHTS_KEY, JSON.stringify(thoughts));
+    localStorage.setItem(STORAGE_KEYS.THOUGHTS, JSON.stringify(thoughts));
   } catch (e) {
     console.error('Error saving thoughts to localStorage:', e);
   }
@@ -74,7 +73,7 @@ export function saveThoughtToLocalStorage(thought: Thought) {
     // Remove existing thought with same ID if present, then add new one at the beginning
     const filtered = existing.filter(t => t.id !== thought.id);
     const updated = [thought, ...filtered];
-    localStorage.setItem(THOUGHTS_KEY, JSON.stringify(updated));
+    localStorage.setItem(STORAGE_KEYS.THOUGHTS, JSON.stringify(updated));
     return true;
   } catch (e) {
     console.error('Error saving thought to localStorage:', e);
