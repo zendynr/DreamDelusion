@@ -168,9 +168,11 @@ export default function LandingPage({ onAuthSuccess, theme = 'dark' }: { onAuthS
 
         <div className="landing-footer">
           <p className="landing-description">
-            A minimal space for capturing your thoughts through voice transcription.
+            A minimal space.
             <br />
             No distractions, just you and your mind.
+            <br />
+            From ZoneBros Studios
           </p>
         </div>
       </div>
