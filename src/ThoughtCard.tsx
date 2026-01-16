@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Thought, ThoughtTag } from './types';
+import { animations } from './utils/animations';
+import { useHoverAnimation } from './hooks/useGSAP';
 
 interface ThoughtCardProps {
   thought: Thought;
@@ -64,20 +66,59 @@ const formatDuration = (seconds: number): string => {
 export default function ThoughtCard({ thought, isSelected, onClick, onPin, onDelete }: ThoughtCardProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const primaryTag = thought.tags.length > 0 ? thought.tags[0] : 'Random';
+  const cardRef = useRef<HTMLDivElement>(null);
+  const hoverAnimation = useHoverAnimation(1.02, 0.2);
+
+  useEffect(() => {
+    if (cardRef.current) {
+      animations.fadeInUp(cardRef.current, 0);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (cardRef.current && isSelected) {
+      animations.pulse(cardRef.current, 1.01);
+    }
+  }, [isSelected]);
 
   return (
     <div
+      ref={cardRef}
       className={`thought-card ${isSelected ? 'selected' : ''} ${thought.pinned ? 'pinned' : ''}`}
       onClick={onClick}
+      onMouseEnter={hoverAnimation.onMouseEnter}
+      onMouseLeave={hoverAnimation.onMouseLeave}
+      style={{ cursor: 'pointer' }}
     >
       <div className="thought-card-header">
         <div className="thought-card-icon">
           <TagIcon tag={primaryTag} />
         </div>
         <div className="thought-card-content">
-          <div className="thought-card-title">{thought.title || thought.text.substring(0, 50)}</div>
+          <div className="thought-card-title">
+            {thought.title || thought.text.substring(0, 50)}
+            {(thought.audioUrl || thought.videoUrl) && (
+              <span style={{ marginLeft: '8px', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                {thought.audioUrl && (
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ width: '14px', height: '14px', opacity: 0.7 }}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                )}
+                {thought.videoUrl && (
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" style={{ width: '14px', height: '14px', opacity: 0.7 }}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" />
+                  </svg>
+                )}
+              </span>
+            )}
+          </div>
           <div className="thought-card-meta">
             {formatTimeOfDay(thought.timestamp)} · {formatDuration(thought.durationSeconds)}
+            {thought.recordingType && (
+              <span style={{ marginLeft: '8px', opacity: 0.7 }}>
+                · {thought.recordingType === 'voice' ? 'Voice' : thought.recordingType === 'screen' ? 'Screen' : 'Transcription'}
+              </span>
+            )}
           </div>
         </div>
         <div className="thought-card-actions">

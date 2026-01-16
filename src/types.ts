@@ -8,6 +8,9 @@ export type Thought = {
   tags: ThoughtTag[];
   pinned: boolean;
   durationSeconds: number; // Duration of the recording
+  audioUrl?: string; // URL to audio recording (voice note)
+  videoUrl?: string; // URL to video recording (screen recording)
+  recordingType?: 'transcription' | 'voice' | 'screen'; // Type of recording
 };
 
 export type ChatMessage = {

@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Thought, ThoughtTag } from './types';
 import ThoughtCard from './ThoughtCard';
 import ThoughtDetail from './ThoughtDetail';
+import { animations } from './utils/animations';
 
 interface LibraryViewProps {
   thoughts: Thought[];
@@ -133,7 +134,7 @@ export default function LibraryView({
           )}
         </div>
 
-        <div className="library-thoughts-list">
+        <div ref={thoughtsListRef} className="library-thoughts-list">
           {groupedThoughts.length === 0 ? (
             <div className="library-empty">
               <p>No thoughts yet.</p>

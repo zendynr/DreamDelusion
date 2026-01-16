@@ -7,11 +7,14 @@ import CaptureView from './CaptureView';
 import LoadingSpinner from './components/LoadingSpinner';
 import Toast from './components/Toast';
 import ErrorMessage from './components/ErrorMessage';
+import AnimatedModal from './components/AnimatedModal';
 import { saveAllThoughts, migrateOldData, saveThoughtToLocalStorage, loadAllThoughtsFromLocalStorage } from './dataStorage';
 import { subscribeToThoughts, saveThought, deleteThought } from './firebase/db';
 import { migrateThoughtsToFirebase } from './firebase/migration';
+import { uploadAudioFile, uploadVideoFile } from './firebase/storage';
 import { useTranscript } from './hooks/useTranscript';
 import { useToast } from './hooks/useToast';
+import { animations } from './utils/animations';
 import { getLastWords } from './utils/transcript';
 import { createThought, mergeThoughts } from './utils/thoughtHelpers';
 import { STORAGE_KEYS, TOAST_DURATIONS, TRANSCRIPT_CONFIG } from './utils/constants';
@@ -47,6 +50,7 @@ function App() {
   const isListeningRef = useRef(false);
   const errorRef = useRef<string | null>(null);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountDropdownRef = useRef<HTMLDivElement | null>(null);
   const finalTranscriptRef = useRef('');
   const unsubscribeThoughtsRef = useRef<(() => void) | null>(null);
 
@@ -281,6 +285,35 @@ function App() {
     }
   };
 
+  const handleStartScreenRecordingWithTranscription = async () => {
+    // Reset transcript for fresh start
+    transcript.resetTranscript();
+    finalTranscriptRef.current = '';
+    setLivePreview('');
+    recordingStartTimeRef.current = Date.now();
+    setElapsedSeconds(0);
+    
+    // Start transcription
+    const hasPermission = await requestMicrophonePermission();
+    if (hasPermission) {
+      startRecognitionRef.current = startRecognition;
+      startRecognition();
+    }
+  };
+
+  const handleStopTranscription = useCallback(async (): Promise<string> => {
+    stopRecognition();
+    setIsListening(false);
+    
+    // Wait for any final results that might be in flight
+    await new Promise(resolve => setTimeout(resolve, TRANSCRIPT_CONFIG.FINAL_RESULT_DELAY_MS));
+    
+    // Get complete text (final + interim)
+    const finalText = transcript.getCompleteText();
+    
+    return finalText || '';
+  }, [stopRecognition, transcript]);
+
   const handleStopCapture = useCallback(async () => {
     stopRecognition();
     setIsListening(false);
@@ -301,6 +334,7 @@ function App() {
     const duration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
     const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
     const newThought = createThought(textToSave, tags, duration);
+    newThought.recordingType = 'transcription';
     
     // Save locally first
     if (!saveThoughtToLocalStorage(newThought)) {
@@ -337,7 +371,123 @@ function App() {
     setLivePreview('');
     recordingStartTimeRef.current = null;
     setElapsedSeconds(0);
-  }, [transcript, selectedTag, currentUser, showToast]);
+  }, [transcript, selectedTag, currentUser, showToast, stopRecognition]);
+
+  const handleVoiceRecorded = useCallback(async (audioBlob: Blob, duration: number) => {
+    if (!currentUser) {
+      setError('Please sign in to save recordings');
+      return;
+    }
+
+    const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
+    const text = 'Voice note recording';
+    const newThought = createThought(text, tags, duration);
+    newThought.recordingType = 'voice';
+    
+    showToast('Uploading voice note...', TOAST_DURATIONS.NORMAL);
+    
+    try {
+      // Upload audio file to Firebase Storage
+      const audioUrl = await uploadAudioFile(audioBlob, currentUser.id, newThought.id);
+      newThought.audioUrl = audioUrl;
+      
+      // Save locally first
+      if (!saveThoughtToLocalStorage(newThought)) {
+        setError('Failed to save voice note locally. Please try again.');
+        return;
+      }
+      
+      // Update UI immediately
+      setThoughts(prev => {
+        if (prev.find(t => t.id === newThought.id)) return prev;
+        return [newThought, ...prev];
+      });
+      
+      setSelectedThoughtId(newThought.id);
+      setMode('library');
+      const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
+      showToast(`Voice note saved${tagMessage} · Syncing to cloud...`, TOAST_DURATIONS.NORMAL);
+      
+      // Sync to Firebase in background
+      saveThought(newThought, currentUser.id)
+        .then(() => {
+          showToast(`Voice note synced to cloud${tagMessage}`, TOAST_DURATIONS.SHORT);
+        })
+        .catch((error) => {
+          console.error('Error syncing voice note to Firebase:', error);
+          showToast('Saved locally. Cloud sync failed - will retry later.', TOAST_DURATIONS.LONG);
+        });
+    } catch (error: any) {
+      console.error('Error uploading voice note:', error);
+      setError(error.message || 'Failed to upload voice note');
+      showToast('Failed to upload voice note', TOAST_DURATIONS.LONG);
+    }
+  }, [currentUser, selectedTag, showToast]);
+
+  const handleScreenRecorded = useCallback(async (videoBlob: Blob, duration: number, transcriptText?: string) => {
+    if (!currentUser) {
+      setError('Please sign in to save recordings');
+      return;
+    }
+
+    // Wait for any final transcription results that might be in flight
+    await new Promise(resolve => setTimeout(resolve, TRANSCRIPT_CONFIG.FINAL_RESULT_DELAY_MS));
+    
+    // Get the complete transcript (final + any interim)
+    const finalTranscriptText = transcriptText || transcript.getCompleteText();
+    
+    const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
+    // Use transcript if available, otherwise use default text
+    const text = finalTranscriptText && finalTranscriptText.trim() 
+      ? finalTranscriptText.trim() 
+      : 'Screen recording';
+    const newThought = createThought(text, tags, duration);
+    newThought.recordingType = 'screen';
+    
+    showToast('Uploading screen recording...', TOAST_DURATIONS.NORMAL);
+    
+    try {
+      // Upload video file to Firebase Storage
+      const videoUrl = await uploadVideoFile(videoBlob, currentUser.id, newThought.id);
+      newThought.videoUrl = videoUrl;
+      
+      // Save locally first
+      if (!saveThoughtToLocalStorage(newThought)) {
+        setError('Failed to save screen recording locally. Please try again.');
+        return;
+      }
+      
+      // Update UI immediately
+      setThoughts(prev => {
+        if (prev.find(t => t.id === newThought.id)) return prev;
+        return [newThought, ...prev];
+      });
+      
+      setSelectedThoughtId(newThought.id);
+      setMode('library');
+      const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
+      showToast(`Screen recording saved${tagMessage} · Syncing to cloud...`, TOAST_DURATIONS.NORMAL);
+      
+      // Sync to Firebase in background
+      saveThought(newThought, currentUser.id)
+        .then(() => {
+          showToast(`Screen recording synced to cloud${tagMessage}`, TOAST_DURATIONS.SHORT);
+        })
+        .catch((error) => {
+          console.error('Error syncing screen recording to Firebase:', error);
+          showToast('Saved locally. Cloud sync failed - will retry later.', TOAST_DURATIONS.LONG);
+        });
+    } catch (error: any) {
+      console.error('Error uploading screen recording:', error);
+      setError(error.message || 'Failed to upload screen recording');
+      showToast('Failed to upload screen recording', TOAST_DURATIONS.LONG);
+    }
+    
+    // Reset transcript after saving
+    transcript.resetTranscript();
+    finalTranscriptRef.current = '';
+    setLivePreview('');
+  }, [currentUser, selectedTag, showToast, transcript]);
 
 
   const handleUpdateThought = async (thought: Thought) => {
@@ -472,7 +622,7 @@ function App() {
             </button>
 
             {accountMenuOpen && (
-              <div className="account-dropdown">
+              <div ref={accountDropdownRef} className="account-dropdown">
                 <div className="account-dropdown-header">
                   {currentUser?.name || 'User'}
                 </div>
@@ -557,6 +707,10 @@ function App() {
             onStartCapture={handleStartCapture}
             onStopCapture={handleStopCapture}
             speechSupported={speechSupported}
+            onVoiceRecorded={handleVoiceRecorded}
+            onScreenRecorded={handleScreenRecorded}
+            onStartScreenRecording={handleStartScreenRecordingWithTranscription}
+            onStopScreenRecording={handleStopTranscription}
           />
         ) : (
           <Suspense fallback={<LoadingSpinner message="Loading library..." />}>
@@ -609,28 +763,27 @@ function App() {
       <Toast message={toastMessage} />
 
       {/* Delete Account Confirmation Modal */}
-      {showDeleteConfirm && (
-        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h3>Delete Account</h3>
-            <p>Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data.</p>
-            <div className="modal-actions">
-              <button
-                className="account-button"
-                onClick={() => setShowDeleteConfirm(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="account-button danger"
-                onClick={handleDeleteAccount}
-              >
-                Delete Account
-              </button>
-            </div>
-          </div>
+      <AnimatedModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete Account"
+      >
+        <p>Are you sure you want to delete your account? This action cannot be undone and will permanently delete all your data.</p>
+        <div className="modal-actions">
+          <button
+            className="account-button"
+            onClick={() => setShowDeleteConfirm(false)}
+          >
+            Cancel
+          </button>
+          <button
+            className="account-button danger"
+            onClick={handleDeleteAccount}
+          >
+            Delete Account
+          </button>
         </div>
-      )}
+      </AnimatedModal>
     </div>
   );
 }

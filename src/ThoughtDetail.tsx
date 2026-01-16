@@ -169,8 +169,69 @@ export default function ThoughtDetail({
         </div>
       </div>
 
+      {/* Audio Player */}
+      {thought.audioUrl && (
+        <div className="thought-detail-media" style={{
+          marginBottom: '24px',
+          padding: '16px',
+          background: 'var(--bg-secondary, rgba(0,0,0,0.05))',
+          borderRadius: '8px',
+        }}>
+          <div className="thought-detail-media-label" style={{
+            marginBottom: '12px',
+            fontWeight: '500',
+            fontSize: '0.875rem',
+            color: 'var(--text-secondary)',
+          }}>
+            Voice Note:
+          </div>
+          <audio
+            controls
+            src={thought.audioUrl}
+            style={{
+              width: '100%',
+              height: '40px',
+            }}
+          >
+            Your browser does not support the audio element.
+          </audio>
+        </div>
+      )}
+
+      {/* Video Player */}
+      {thought.videoUrl && (
+        <div className="thought-detail-media" style={{
+          marginBottom: '24px',
+          padding: '16px',
+          background: 'var(--bg-secondary, rgba(0,0,0,0.05))',
+          borderRadius: '8px',
+        }}>
+          <div className="thought-detail-media-label" style={{
+            marginBottom: '12px',
+            fontWeight: '500',
+            fontSize: '0.875rem',
+            color: 'var(--text-secondary)',
+          }}>
+            Screen Recording:
+          </div>
+          <video
+            controls
+            src={thought.videoUrl}
+            style={{
+              width: '100%',
+              maxHeight: '400px',
+              borderRadius: '4px',
+            }}
+          >
+            Your browser does not support the video element.
+          </video>
+        </div>
+      )}
+
       <div className="thought-detail-transcript">
-        <div className="thought-detail-transcript-label">Transcript:</div>
+        <div className="thought-detail-transcript-label">
+          {thought.recordingType === 'transcription' ? 'Transcript:' : 'Notes:'}
+        </div>
         <div className="thought-detail-transcript-text">{thought.text}</div>
       </div>
 
