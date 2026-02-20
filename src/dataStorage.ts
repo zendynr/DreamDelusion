@@ -81,6 +81,20 @@ export function saveThoughtToLocalStorage(thought: Thought) {
   }
 }
 
+// Remove one or more thoughts from localStorage (e.g. after merge so they are not re-added by listener)
+export function removeThoughtsFromLocalStorage(ids: string[]) {
+  try {
+    const existing = loadAllThoughtsFromLocalStorage();
+    const idSet = new Set(ids);
+    const filtered = existing.filter(t => !idSet.has(t.id));
+    localStorage.setItem(STORAGE_KEYS.THOUGHTS, JSON.stringify(filtered));
+    return true;
+  } catch (e) {
+    console.error('Error removing thoughts from localStorage:', e);
+    return false;
+  }
+}
+
 // Migrate old session-based data to new thought-based format
 export function migrateOldData(): Thought[] {
   try {

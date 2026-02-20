@@ -1,5 +1,8 @@
 import { useState } from 'react';
 import { Thought, ThoughtTag } from './types';
+import type { EmotionKey } from './types';
+import { EMOTION_COLORS, EMOTION_LABELS, EMOTION_KEYS, emotionToVector, mixEmotionColor, getThoughtEmotionVector } from './utils/constellation';
+import { askAiAboutThought, isAiAvailable } from './services/ai';
 
 interface ThoughtDetailProps {
   thought: Thought | null;
@@ -42,6 +45,8 @@ export default function ThoughtDetail({
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleValue, setTitleValue] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState<{ text: string } | { error: string } | null>(null);
 
   if (!thought) {
     return (
@@ -94,6 +99,31 @@ export default function ThoughtDetail({
       tags: newTags,
     });
   };
+
+  const setEmotion = (emotion: EmotionKey) => {
+    const emotionVector = emotionToVector(emotion);
+    onUpdate({
+      ...thought,
+      emotion,
+      emotionVector,
+      color: mixEmotionColor(emotionVector),
+    });
+  };
+
+  /** Dominant emotion for chip highlight (max weight in vector, or legacy emotion) */
+  const dominantEmotion = ((): EmotionKey => {
+    const vec = getThoughtEmotionVector(thought);
+    let maxK: EmotionKey = thought.emotion ?? 'neutral';
+    let maxV = 0;
+    for (const k of EMOTION_KEYS as EmotionKey[]) {
+      const v = vec[k] ?? 0;
+      if (v > maxV) {
+        maxV = v;
+        maxK = k;
+      }
+    }
+    return maxK;
+  })();
 
   return (
     <div className="thought-detail">
@@ -169,6 +199,28 @@ export default function ThoughtDetail({
         </div>
       </div>
 
+      <div className="thought-detail-emotion-section">
+        <div className="thought-detail-tags-label">Emotion (color in constellation):</div>
+        <div className="thought-detail-emotions">
+          {EMOTION_KEYS.map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={`thought-detail-emotion-chip ${dominantEmotion === key ? 'active' : ''}`}
+              style={{
+                borderColor: EMOTION_COLORS[key],
+                backgroundColor: dominantEmotion === key ? EMOTION_COLORS[key] : undefined,
+                color: dominantEmotion === key ? '#0a0a0a' : undefined,
+              }}
+              onClick={() => setEmotion(key)}
+            >
+              <span className="thought-detail-emotion-dot" style={{ backgroundColor: EMOTION_COLORS[key] }} />
+              {EMOTION_LABELS[key]}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="thought-detail-transcript">
         <div className="thought-detail-transcript-label">Transcript:</div>
         <div className="thought-detail-transcript-text">{thought.text}</div>
@@ -195,16 +247,59 @@ export default function ThoughtDetail({
             </>
           )}
         </button>
-        <button
-          className="thought-detail-action-btn"
-          onClick={() => {
-            // Placeholder for AI feature
-            alert('AI feature coming soon!');
-          }}
-        >
-          Ask AI about this thought
-        </button>
       </div>
+
+      {isAiAvailable() ? (
+        <div className="thought-detail-ai">
+          <div className="thought-detail-ai-label">Ask AI</div>
+          <div className="thought-detail-ai-buttons">
+            <button
+              type="button"
+              className="thought-detail-ai-btn"
+              disabled={aiLoading}
+              onClick={async () => {
+                setAiResult(null);
+                setAiLoading(true);
+                const result = await askAiAboutThought(thought.text, 'explain-10');
+                setAiLoading(false);
+                setAiResult(result.ok ? { text: result.text } : { error: result.error });
+              }}
+            >
+              Explain in 10 words
+            </button>
+            <button
+              type="button"
+              className="thought-detail-ai-btn"
+              disabled={aiLoading}
+              onClick={async () => {
+                setAiResult(null);
+                setAiLoading(true);
+                const result = await askAiAboutThought(thought.text, 'summarise');
+                setAiLoading(false);
+                setAiResult(result.ok ? { text: result.text } : { error: result.error });
+              }}
+            >
+              Summarise thought
+            </button>
+          </div>
+          {aiLoading && (
+            <div className="thought-detail-ai-result thought-detail-ai-loading">
+              <span className="thought-detail-ai-spinner" aria-hidden />
+              Thinking…
+            </div>
+          )}
+          {!aiLoading && aiResult && (
+            <div className={`thought-detail-ai-result ${'error' in aiResult ? 'thought-detail-ai-error' : ''}`}>
+              {'error' in aiResult ? aiResult.error : aiResult.text}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="thought-detail-ai-unavailable">
+          Add <code>VITE_GEMINI_API_KEY</code> to .env to use Ask AI (get a key at{' '}
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>).
+        </div>
+      )}
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (

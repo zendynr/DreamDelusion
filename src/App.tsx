@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, Suspense, lazy, useCallback } from 'react';
-import { Thought, ThoughtTag, User } from './types';
+import { Thought, ThoughtTag, User, ManualLink } from './types';
+import type { EmotionKey } from './types';
 import { useSpeechRecognition } from './useSpeechRecognition';
 import { deleteUser, signOut, onAuthStateChange } from './auth';
 import ModeToggle from './ModeToggle';
@@ -7,24 +8,25 @@ import CaptureView from './CaptureView';
 import LoadingSpinner from './components/LoadingSpinner';
 import Toast from './components/Toast';
 import ErrorMessage from './components/ErrorMessage';
-import { saveAllThoughts, migrateOldData, saveThoughtToLocalStorage, loadAllThoughtsFromLocalStorage } from './dataStorage';
+import { saveAllThoughts, migrateOldData, saveThoughtToLocalStorage, loadAllThoughtsFromLocalStorage, removeThoughtsFromLocalStorage } from './dataStorage';
 import { subscribeToThoughts, saveThought, deleteThought } from './firebase/db';
 import { migrateThoughtsToFirebase } from './firebase/migration';
 import { useTranscript } from './hooks/useTranscript';
 import { useToast } from './hooks/useToast';
 import { getLastWords } from './utils/transcript';
-import { createThought, mergeThoughts } from './utils/thoughtHelpers';
+import { createThought, mergeThoughts, mergeTwoThoughts, transferConnections } from './utils/thoughtHelpers';
 import { STORAGE_KEYS, TOAST_DURATIONS, TRANSCRIPT_CONFIG } from './utils/constants';
 
 // Lazy load heavy components for code splitting
 const LandingPage = lazy(() => import('./LandingPage'));
 const LibraryView = lazy(() => import('./LibraryView'));
+const LibraryConstellationView = lazy(() => import('./LibraryConstellationView'));
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [mode, setMode] = useState<'capture' | 'library'>('capture');
+  const [mode, setMode] = useState<'capture' | 'library' | 'constellations'>('capture');
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [selectedThoughtId, setSelectedThoughtId] = useState<string | null>(null);
   const [selectedTag, setSelectedTag] = useState<ThoughtTag | 'All'>('All');
@@ -38,7 +40,10 @@ function App() {
     const saved = localStorage.getItem(STORAGE_KEYS.THEME);
     return (saved === 'light' || saved === 'dark') ? saved : 'dark';
   });
-  
+  const [manualLinks, setManualLinks] = useState<ManualLink[]>([]);
+  const [bursts, setBursts] = useState<Array<{ id: number; x: number; y: number; color: string }>>([]);
+  const [pendingThought, setPendingThought] = useState<{ text: string; durationSeconds: number } | null>(null);
+
   const { toastMessage, showToast } = useToast();
   const transcript = useTranscript();
   
@@ -49,6 +54,8 @@ function App() {
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
   const finalTranscriptRef = useRef('');
   const unsubscribeThoughtsRef = useRef<(() => void) | null>(null);
+  /** Ids we are deleting from Firebase due to merge; filter these out of listener until deletes complete */
+  const pendingMergeDeleteIdsRef = useRef<Set<string>>(new Set());
 
   // Keep refs in sync
   useEffect(() => {
@@ -83,9 +90,13 @@ function App() {
         }
         
         unsubscribeThoughtsRef.current = subscribeToThoughts(user.id, (updatedThoughts) => {
-          // Merge Firebase thoughts with localStorage thoughts
+          // Don't re-add thoughts we're in the process of deleting (merge); Firebase may still return them until delete completes
+          const pending = pendingMergeDeleteIdsRef.current;
+          const fromFirebase = pending.size > 0
+            ? updatedThoughts.filter((t) => !pending.has(t.id))
+            : updatedThoughts;
           const localThoughts = loadAllThoughtsFromLocalStorage();
-          const merged = mergeThoughts([...updatedThoughts], localThoughts);
+          const merged = mergeThoughts([...fromFirebase], localThoughts);
           setThoughts(merged);
         });
         
@@ -284,13 +295,10 @@ function App() {
   const handleStopCapture = useCallback(async () => {
     stopRecognition();
     setIsListening(false);
-    
-    // Wait for any final results that might be in flight
+
     await new Promise(resolve => setTimeout(resolve, TRANSCRIPT_CONFIG.FINAL_RESULT_DELAY_MS));
-    
-    // Get complete text (final + interim)
     const textToSave = transcript.getCompleteText();
-    
+
     if (!textToSave || !recordingStartTimeRef.current) {
       transcript.resetTranscript();
       setLivePreview('');
@@ -299,45 +307,55 @@ function App() {
     }
 
     const duration = Math.floor((Date.now() - recordingStartTimeRef.current) / 1000);
-    const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
-    const newThought = createThought(textToSave, tags, duration);
-    
-    // Save locally first
-    if (!saveThoughtToLocalStorage(newThought)) {
-      setError('Failed to save thought locally. Please try again.');
-      return;
-    }
-    
-    // Update UI immediately
-    setThoughts(prev => {
-      if (prev.find(t => t.id === newThought.id)) return prev;
-      return [newThought, ...prev];
-    });
-    
-    setSelectedThoughtId(newThought.id);
-    setMode('library');
-    const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
-    showToast(`Thought saved locally${tagMessage} · Syncing to cloud...`, TOAST_DURATIONS.NORMAL);
-    
-    // Sync to Firebase in background
-    if (currentUser) {
-      saveThought(newThought, currentUser.id)
-        .then(() => {
-          showToast(`Thought synced to cloud${tagMessage}`, TOAST_DURATIONS.SHORT);
-        })
-        .catch((error) => {
-          console.error('Error syncing thought to Firebase:', error);
-          showToast('Saved locally. Cloud sync failed - will retry later.', TOAST_DURATIONS.LONG);
-        });
-    }
-    
-    // Reset after save
+    recordingStartTimeRef.current = null;
+    setPendingThought({ text: textToSave, durationSeconds: duration });
+    setLivePreview('');
+  }, [transcript]);
+
+  const handleConfirmSaveWithEmotion = useCallback(
+    (emotion: EmotionKey) => {
+      if (!pendingThought) return;
+      const { text, durationSeconds } = pendingThought;
+      const tags: ThoughtTag[] = selectedTag !== 'All' ? [selectedTag] : [];
+      const newThought = createThought(text, tags, durationSeconds, emotion);
+
+      if (!saveThoughtToLocalStorage(newThought)) {
+        setError('Failed to save thought locally. Please try again.');
+        return;
+      }
+
+      setThoughts(prev => {
+        if (prev.find(t => t.id === newThought.id)) return prev;
+        return [newThought, ...prev];
+      });
+      setSelectedThoughtId(newThought.id);
+      setMode('library');
+      setPendingThought(null);
+      transcript.resetTranscript();
+      finalTranscriptRef.current = '';
+
+      const tagMessage = tags.length > 0 ? ` · Tagged as ${tags[0]}` : '';
+      showToast(`Thought saved locally${tagMessage} · Syncing to cloud...`, TOAST_DURATIONS.NORMAL);
+
+      if (currentUser) {
+        saveThought(newThought, currentUser.id)
+          .then(() => {
+            showToast(`Thought synced to cloud${tagMessage}`, TOAST_DURATIONS.SHORT);
+          })
+          .catch((error) => {
+            console.error('Error syncing thought to Firebase:', error);
+            showToast('Saved locally. Cloud sync failed - will retry later.', TOAST_DURATIONS.LONG);
+          });
+      }
+    },
+    [pendingThought, selectedTag, currentUser, showToast, transcript]
+  );
+
+  const handleCancelSave = useCallback(() => {
+    setPendingThought(null);
     transcript.resetTranscript();
     finalTranscriptRef.current = '';
-    setLivePreview('');
-    recordingStartTimeRef.current = null;
-    setElapsedSeconds(0);
-  }, [transcript, selectedTag, currentUser, showToast]);
+  }, [transcript]);
 
 
   const handleUpdateThought = async (thought: Thought) => {
@@ -383,12 +401,12 @@ function App() {
     }
   };
 
-  const handlePinThought = async (id: string) => {
+const handlePinThought = async (id: string) => {
     if (!currentUser) return;
-    
+
     const thought = thoughts.find(t => t.id === id);
     if (!thought) return;
-    
+
     try {
       const updatedThought = { ...thought, pinned: !thought.pinned };
       await saveThought(updatedThought, currentUser.id);
@@ -396,6 +414,54 @@ function App() {
     } catch (error) {
       console.error('Error pinning thought:', error);
       setError('Failed to update thought. Please try again.');
+    }
+  };
+
+  const triggerBurst = (x: number, y: number, color: string) => {
+    const id = Date.now();
+    setBursts(prev => [...prev, { id, x, y, color }]);
+    setTimeout(() => setBursts(prev => prev.filter(b => b.id !== id)), 1000);
+  };
+
+  const handleMergeThoughts = async (id1: string, id2: string) => {
+    const t1 = thoughts.find(t => t.id === id1);
+    const t2 = thoughts.find(t => t.id === id2);
+    if (!t1 || !t2 || !currentUser) return;
+
+    // Mark as pending delete so the listener never re-adds them from stale Firebase snapshot
+    pendingMergeDeleteIdsRef.current.add(id1);
+    pendingMergeDeleteIdsRef.current.add(id2);
+
+    // Step 1: create merged thought (content + blended emotion vector)
+    const merged = mergeTwoThoughts(t1, t2);
+    const mergedX = merged.x ?? 0;
+    const mergedY = merged.y ?? 0;
+    triggerBurst(mergedX, mergedY, merged.color ?? '#777');
+
+    // Step 2: rewire graph — transfer all connections from A/B to merged
+    const newLinks = transferConnections(manualLinks, id1, id2, merged.id);
+
+    // Step 3: remove originals from state (no duplicate nodes)
+    setThoughts(prev => [...prev.filter(t => t.id !== id1 && t.id !== id2), merged]);
+    setManualLinks(newLinks);
+    setSelectedThoughtId(merged.id);
+
+    removeThoughtsFromLocalStorage([id1, id2]);
+    saveThoughtToLocalStorage(merged);
+
+    try {
+      await saveThought(merged, currentUser.id);
+      // Delete originals from Firebase so they stay removed (listener won't re-add them while pending)
+      await Promise.all([
+        deleteThought(id1, currentUser.id),
+        deleteThought(id2, currentUser.id),
+      ]);
+    } catch (error) {
+      console.error('Error merging thoughts:', error);
+      setError('Failed to merge thoughts. Please try again.');
+    } finally {
+      pendingMergeDeleteIdsRef.current.delete(id1);
+      pendingMergeDeleteIdsRef.current.delete(id2);
     }
   };
 
@@ -557,8 +623,11 @@ function App() {
             onStartCapture={handleStartCapture}
             onStopCapture={handleStopCapture}
             speechSupported={speechSupported}
+            pendingThought={pendingThought}
+            onConfirmSaveWithEmotion={handleConfirmSaveWithEmotion}
+            onCancelSave={handleCancelSave}
           />
-        ) : (
+        ) : mode === 'library' ? (
           <Suspense fallback={<LoadingSpinner message="Loading library..." />}>
             <LibraryView
               thoughts={thoughts}
@@ -572,6 +641,24 @@ function App() {
               onStartCapture={() => setMode('capture')}
               onTagChange={setSelectedTag}
             />
+          </Suspense>
+        ) : (
+          <Suspense fallback={<LoadingSpinner message="Loading constellations..." />}>
+            <div className="app-constellations-wrap">
+              <LibraryConstellationView
+                thoughts={thoughts}
+                selectedThoughtId={selectedThoughtId}
+                onSelectThought={setSelectedThoughtId}
+                onUpdateThought={handleUpdateThought}
+                onDeleteThought={handleDeleteThought}
+                onMergeThoughts={handleMergeThoughts}
+                onPinThought={handlePinThought}
+                manualLinks={manualLinks}
+                setManualLinks={setManualLinks}
+                bursts={bursts}
+                onStartCapture={() => setMode('capture')}
+              />
+            </div>
           </Suspense>
         )}
       </div>

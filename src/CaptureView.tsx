@@ -1,3 +1,7 @@
+import { useState } from 'react';
+import type { EmotionKey } from './types';
+import { EMOTION_COLORS, EMOTION_LABELS, EMOTION_KEYS } from './utils/constellation';
+
 interface CaptureViewProps {
   isListening: boolean;
   livePreview: string;
@@ -5,6 +9,9 @@ interface CaptureViewProps {
   onStartCapture: () => void;
   onStopCapture: () => void;
   speechSupported: boolean;
+  pendingThought?: { text: string; durationSeconds: number } | null;
+  onConfirmSaveWithEmotion?: (emotion: EmotionKey) => void;
+  onCancelSave?: () => void;
 }
 
 export default function CaptureView({
@@ -14,7 +21,12 @@ export default function CaptureView({
   onStartCapture,
   onStopCapture,
   speechSupported,
+  pendingThought = null,
+  onConfirmSaveWithEmotion,
+  onCancelSave,
 }: CaptureViewProps) {
+  const [selectedEmotion, setSelectedEmotion] = useState<EmotionKey | null>(null);
+
   const handleToggle = () => {
     if (isListening) {
       onStopCapture();
@@ -23,15 +35,61 @@ export default function CaptureView({
     }
   };
 
-  // Split live preview into words for word-by-word animation
   const words = livePreview.trim().split(/\s+/).filter(word => word.length > 0);
 
-  // Format timer as MM:SS
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const handleManifest = () => {
+    const emotion = selectedEmotion ?? 'neutral';
+    onConfirmSaveWithEmotion?.(emotion);
+    setSelectedEmotion(null);
+  };
+
+  const handleCancel = () => {
+    onCancelSave?.();
+    setSelectedEmotion(null);
+  };
+
+  // Review step: set emotion when finishing a thought (color-coded; synthesizing later mixes colors)
+  if (pendingThought && onConfirmSaveWithEmotion) {
+    return (
+      <div className="capture-view-simple capture-review">
+        <h2 className="capture-review-title">How did it feel?</h2>
+        <p className="capture-review-transcript">"{pendingThought.text}"</p>
+        <div className="capture-review-emotions">
+          {EMOTION_KEYS.map((key) => (
+            <button
+              key={key}
+              type="button"
+              className={`capture-emotion-chip ${selectedEmotion === key ? 'selected' : ''}`}
+              style={{
+                ['--emotion-color' as string]: EMOTION_COLORS[key],
+                backgroundColor: selectedEmotion === key ? EMOTION_COLORS[key] : undefined,
+                borderColor: EMOTION_COLORS[key],
+                color: selectedEmotion === key ? '#0a0a0a' : undefined,
+              }}
+              onClick={() => setSelectedEmotion(key)}
+            >
+              <span className="capture-emotion-dot" style={{ backgroundColor: EMOTION_COLORS[key] }} />
+              {EMOTION_LABELS[key]}
+            </button>
+          ))}
+        </div>
+        <div className="capture-review-actions">
+          <button type="button" className="capture-review-btn cancel" onClick={handleCancel}>
+            Cancel
+          </button>
+          <button type="button" className="capture-review-btn manifest" onClick={handleManifest}>
+            Manifest
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="capture-view-simple">
@@ -56,7 +114,7 @@ export default function CaptureView({
           </svg>
         )}
       </button>
-      
+
       {isListening && (
         <div className="recording-timer" style={{
           textAlign: 'center',
@@ -69,7 +127,7 @@ export default function CaptureView({
           {formatTime(elapsedSeconds)}
         </div>
       )}
-      
+
       {isListening && (
         <div className="live-transcription">
           <div className="live-transcription-words">
@@ -94,4 +152,3 @@ export default function CaptureView({
     </div>
   );
 }
-

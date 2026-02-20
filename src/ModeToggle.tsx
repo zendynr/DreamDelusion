@@ -1,4 +1,4 @@
-type Mode = 'capture' | 'library';
+export type Mode = 'capture' | 'library' | 'constellations';
 
 interface ModeToggleProps {
   mode: Mode;
@@ -19,6 +19,12 @@ export default function ModeToggle({ mode, onModeChange }: ModeToggleProps) {
         onClick={() => onModeChange('library')}
       >
         Library
+      </button>
+      <button
+        className={`mode-toggle-btn ${mode === 'constellations' ? 'active' : ''}`}
+        onClick={() => onModeChange('constellations')}
+      >
+        Constellations
       </button>
     </div>
   );
