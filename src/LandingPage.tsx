@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { signUp, signIn, signInWithGoogle } from './auth';
 import Logo from './Logo';
+import DonateModal from './components/DonateModal';
 
 type AuthMode = 'login' | 'signup';
 
@@ -11,6 +12,7 @@ export default function LandingPage({ onAuthSuccess, theme = 'dark' }: { onAuthS
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showDonateModal, setShowDonateModal] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -174,8 +176,20 @@ export default function LandingPage({ onAuthSuccess, theme = 'dark' }: { onAuthS
             <br />
             From ZoneBroz Studios
           </p>
+          <button
+            type="button"
+            className="landing-donate-link"
+            onClick={() => setShowDonateModal(true)}
+          >
+            Support us
+          </button>
         </div>
       </div>
+
+      <DonateModal
+        open={showDonateModal}
+        onClose={() => setShowDonateModal(false)}
+      />
     </div>
   );
 }

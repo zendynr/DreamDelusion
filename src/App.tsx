@@ -7,6 +7,7 @@ import ModeToggle from './ModeToggle';
 import CaptureView from './CaptureView';
 import LoadingSpinner from './components/LoadingSpinner';
 import Toast from './components/Toast';
+import DonateModal from './components/DonateModal';
 import ErrorMessage from './components/ErrorMessage';
 import { saveAllThoughts, migrateOldData, saveThoughtToLocalStorage, loadAllThoughtsFromLocalStorage, removeThoughtsFromLocalStorage } from './dataStorage';
 import { subscribeToThoughts, saveThought, deleteThought } from './firebase/db';
@@ -36,6 +37,7 @@ function App() {
   const [livePreview, setLivePreview] = useState('');
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDonateModal, setShowDonateModal] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.THEME);
     return (saved === 'light' || saved === 'dark') ? saved : 'dark';
@@ -566,6 +568,18 @@ const handlePinThought = async (id: string) => {
                     </>
                   )}
                 </button>
+                <button
+                  className="account-dropdown-item"
+                  onClick={() => {
+                    setShowDonateModal(true);
+                    setAccountMenuOpen(false);
+                  }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="icon-sm" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                  </svg>
+                  Support / Donate
+                </button>
                 {currentUser ? (
                   <>
                     <button
@@ -694,6 +708,13 @@ const handlePinThought = async (id: string) => {
       )}
 
       <Toast message={toastMessage} />
+
+      <DonateModal
+        open={showDonateModal}
+        onClose={() => setShowDonateModal(false)}
+        defaultEmail={currentUser?.email ?? undefined}
+        onSuccess={() => showToast('Thank you for your support!', TOAST_DURATIONS.NORMAL)}
+      />
 
       {/* Delete Account Confirmation Modal */}
       {showDeleteConfirm && (

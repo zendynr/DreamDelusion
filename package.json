@@ -13,6 +13,7 @@
     "firebase:serve": "npm run build && firebase serve"
   },
   "dependencies": {
+    "@paystack/inline-js": "^2.22.7",
     "firebase": "^12.6.0",
     "framer-motion": "^12.34.2",
     "lucide-react": "^0.575.0",
@@ -20,6 +21,7 @@
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/paystack__inline-js": "^1.0.2",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.2.1",
